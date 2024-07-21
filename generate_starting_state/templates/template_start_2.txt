@@ -1,0 +1,22 @@
+# starting configuration template for LAMMPS available at
+# https://github.com/OljaOctagon/Introduction-to-Computational-Physics
+# File format according to https://docs.lammps.org/2001/data_format.html
+
+{{number_of_atoms}} atoms
+{{number_of_atom_types}} atom types
+
+{{xlo}}   {{xhi}}     xlo xhi
+{{ylo}}   {{yhi}}     ylo yhi
+{{zlo}}   {{zhi}}     zlo zhi
+         
+Masses
+#  atomtype, mass
+{% for mass in masses -%}
+    {{mass.type}}       {{mass.mass}}  
+{% endfor %}
+
+Atoms 
+#  atom-ID       mol-ID       atom-type    charge     x       y      z
+{% for atom in atoms -%}
+    {{atom.atom_id}}          {{atom.mol_id}}         {{atom.atom_type}}       {{atom.charge}}        {{atom.x}}       {{atom.y}}       {{atom.z}}
+{% endfor %}

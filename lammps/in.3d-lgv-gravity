@@ -48,7 +48,7 @@ thermo_style custom step temp pe ke etotal press
 thermo_modify lost warn flush yes 
 
 
-dump           dump2   all atom 100000 trajectory3dgrav_v2.lammpstrj
+dump           dump2   all atom 100000 trajectory3dgrav_test.lammpstrj
 dump_modify    dump2   sort id    pbc yes
 unfix 4 
 fix 4 all langevin 1 1 1.0 648558 omega yes 
