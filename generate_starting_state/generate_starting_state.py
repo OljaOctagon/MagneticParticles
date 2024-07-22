@@ -28,17 +28,39 @@ context = {
 atoms = []
 molecules = []
 
+particles = []
+
 for imol in range(npart):
     core_id = (imol*natoms_per_mol) + 1 
    
-    xcore = np.random.rand() * 2 * lx2 - lx2
-    ycore= np.random.rand() * 2 * ly2 - ly2
-    zcore = np.random.rand() * 2 * lz2 - lz2
+    dist=0
+    while dist<sigma:
+        xcore = np.random.rand() * 2 * lx2 - lx2
+        ycore= np.random.rand() * 2 * ly2 - ly2
+        zcore = np.random.rand() * 2 * lz2 - lz2
+        i=0
+        dist=sigma*2 
+        while dist>sigma and i<len(particles) and particles:  
+            distx = xcore - particles[i][0]
+            disty = ycore - particles[i][1]
+            distz = zcore - particles[i][2]
+                
+            distx = np.min([distx,lx2*2-distx])
+            disty = np.min([disty,ly2*2-disty])
+            distz = np.min([distz,lz2*2-distz])
+        
+            dist = np.linalg.norm(np.array([distx,disty,distz]))
+            i+=1 
+        
+        if i == len(particles):
+            break
 
+    particles.append(np.array([xcore,ycore,zcore]))
+    
     core_i = {
             "atom_id": core_id,
             "atom_type": 1,
-            "mol_id": imol+1,
+            "charge": 1,
             "x": xcore,
             "y": ycore,
             "z": zcore, 
@@ -60,7 +82,7 @@ for imol in range(npart):
         patch_i = {
             "atom_id": patch_id,
             "atom_type": 2,
-            "mol_id": imol+1,
+            "charge": 1,
             "x": xpatch,
             "y": ypatch,
             "z": zpatch, 

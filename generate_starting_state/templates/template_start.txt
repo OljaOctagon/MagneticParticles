@@ -10,13 +10,13 @@
 {{zlo}}   {{zhi}}     zlo zhi
          
 Atoms 
-#  atom-ID       mol-ID       atom-type       x       y      z
+#  atom-ID      atom-type       charge     x       y      z  
 {% for atom in atoms -%}
-    {{atom.atom_id}}       {{atom.mol_id}}       {{atom.atom_type}}       {{atom.x}}       {{atom.y}}       {{atom.z}}
+    {{atom.atom_id}} {{atom.atom_type}} {{atom.charge}} {{atom.x}} {{atom.y}} {{atom.z}}
 {% endfor %}
 
 Molecules
 #  atom ID mol ID
 {% for mol in molecules -%}
-    {{mol.atom_id}}       {{mol.mol_id}}
+    {{mol.atom_id}} {{mol.mol_id}}
 {% endfor %}

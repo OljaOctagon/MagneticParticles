@@ -4,6 +4,7 @@ dimension 3
 boundary p p f
 atom_style hybrid sphere dipole 
 
+
 # Simulation settings
 neighbor 0.3 bin
 neigh_modify delay 0 check yes
