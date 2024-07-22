@@ -1,0 +1,39 @@
+# starting configuration template for LAMMPS available at
+# https://github.com/OljaOctagon/Introduction-to-Computational-Physics
+# File format according to https://docs.lammps.org/2001/data_format.html
+
+{{number_of_atoms}} atoms
+{{number_of_bonds}} bonds
+{{number_of_angles}} angles
+
+{{number_of_atom_types}} atom types
+{{number_of_bond_types}} bond types
+{{number_of_angle_types}} angle types
+      
+{{xlo}}   {{xhi}}     xlo xhi
+{{ylo}}   {{yhi}}     ylo yhi
+{{zlo}}   {{zhi}}     zlo zhi
+         
+Masses
+#  atomtype, mass
+{% for mass in masses -%}
+    {{mass.type}}       {{mass.mass}}  
+{% endfor %}
+
+Atoms 
+#  atom-ID       mol-ID       atom-type       x       y      z
+{% for atom in atoms -%}
+    {{atom.atom_id}}         {{atom.mol_id}}         {{atom.atom_type}}       {{atom.charge}}        {{atom.x}}       {{atom.y}}       {{atom.z}}
+{% endfor %}
+
+Bonds
+#  ID bond-type atom-1 atom-2
+{% for bond in bonds -%}
+    {{bond.id}}       {{bond.bond_type}}       {{bond.atom_1}}       {{bond.atom_2}}
+{% endfor %}
+
+Angles
+#  ID    angle-type atom-1 atom-2 atom-3  (atom-2 is the center atom in angle)
+{% for angle in angles -%}
+    {{angle.id}}       {{angle.angle_type}}       {{angle.atom_1}}       {{angle.atom_2}}        {{angle.atom_3}}
+{% endfor %}
