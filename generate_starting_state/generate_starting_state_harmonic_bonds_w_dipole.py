@@ -2,7 +2,7 @@ from jinja2 import Environment, FileSystemLoader
 import numpy as np
 
 npart = 100
-npatches = 2
+npatches = 1
 natoms_per_mol = npatches + 1 
 natoms = npart * natoms_per_mol
 nangles = npart 
@@ -16,16 +16,16 @@ lx2 = 100
 ly2 = 100
 lz2 = 0.5
 
-shift_percent=0.5
-zdist_from_center = (shift_percent)*sigma/2*np.array([-1,1])
+shift_percent=0
+zdist_from_center = (shift_percent)*(sigma/2)*np.array([-1,1])
 
 context = {
     "number_of_atoms": natoms,
     "number_of_bonds": nbonds,
-    "number_of_angles": nangles,
+    #"number_of_angles": nangles,
     "number_of_atom_types": 2,
     "number_of_bond_types": 1,
-    "number_of_angle_types": 1, 
+    #"number_of_angle_types": 1, 
     "xlo": -lx2,
     "xhi": lx2,
     "ylo": -lx2,
@@ -45,7 +45,7 @@ particles = []
 for imol in range(npart):
     core_id = (imol*natoms_per_mol) + 1 
    
-    cutoff=3*sigma
+    cutoff=2*sigma
     dist=0
     while dist<cutoff:
         xcore = np.random.rand() * 2 * lx2 - lx2
@@ -105,7 +105,7 @@ for imol in range(npart):
             "muy": 1,
             "muz": 0, 
             "mol_id": 1, 
-            "diameter": 1,
+            "diameter": 0.2,
             "density": 0.2, 
             }
       
@@ -118,6 +118,7 @@ for imol in range(npart):
             "atom_2": patch_id,
         }
         bonds.append(bond)
+
 
     angle = {
         "id": imol + 1,
@@ -132,10 +133,10 @@ for imol in range(npart):
         
 context["atoms"] = atoms
 context["bonds"] = bonds
-context["angles"] = angles 
+#context["angles"] = angles 
 
 environment = Environment(loader=FileSystemLoader("templates/"))
-template = environment.get_template("template_start_harmonic_w_dipole.txt")
+template = environment.get_template("template_start_harmonic_w_dipole_no_angles.txt")
 
 filename = "starting_state.txt"
 with open(filename, mode="w") as output:
