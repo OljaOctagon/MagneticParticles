@@ -12,34 +12,49 @@ neigh_modify check yes delay 0 every 1
 neigh_modify exclude molecule/intra all
 
 mass 1 1.0
-mass 2 0.1
+mass 2 1.0
 
-pair_style lj/cut/dipole/cut 1.1224 10 
-pair_modify shift yes
-pair_coeff 1 1  1.0 1.0 1.224 10 
-pair_coeff 2 2  0.1 0.1 0.112246 10 
-pair_coeff 1 2  0.1 0.1 0.112246 10 
+set type 1 density 1 
+set type 2 density 1
+
+pair_style lj/cut/dipole/cut 1.22 10
+#pair_modify shift yes
+pair_coeff 1 1  1 1   1.22 10
+pair_coeff 1 2  1 0.1 0.11 10
+pair_coeff 2 2  1 0.1 0.11 10
+
+
+
+#pair_coeff 2 2  0.1 0.1 0.112246 10 
+#pair_coeff 1 2  0.1 0.1 0.112246 10 
 
 
 # Small time step run 
-fix 1 all rigid/nve molecule langevin 1.0 1.0 0.0001 39392  
-fix 2 all nve/sphere update dipole
-fix 3 all enforce2d
-timestep 0.00001
-compute T1 all temp/sphere
-thermo_modify temp T1
-thermo 10000
-run 100000
+#fix 1 all rigid/nve molecule langevin 1.0 1.0 0.0001 39392  
+#fix 2 all nve/sphere update dipole
+#fix 3 all enforce2d
+#timestep 0.00001
+#compute T1 all temp/sphere
+#thermo_modify temp T1
+#thermo 10000
+#run 100000
 
 #  normal time step run 
-unfix 1 
+#unfix 1 
 restart 10000000 dimer.restart
-fix 1 all rigid/nve molecule langevin 0.1 .1 0.1 29393 
+velocity       all create 1.0 399293 dist gaussian rot yes
+fix 1 all rigid/nve molecule langevin 0.00025 0.00025 0.1 29393 
+#fix 1 all rigid/nvt molecule temp 0.01 0.01 5.0 reinit yes
+#fix 2 all nve/sphere update dipole
+fix 3 all enforce2d
 timestep 0.0005
+
+compute T2 all temp/sphere
+thermo_modify temp T2
 thermo 50000
-variable tot_pot equal epair
-thermo_style custom step v_tot_pot temp pe press
-fix myfile all ave/time 10000 1 10000 v_tot_pot file pe.dat
+#variable tot_pot equal epair
+#thermo_style custom step v_tot_pot temp pe press
+#fix myfile all ave/time 10000 1 10000 v_tot_pot file pe.dat
 
 dump           dump2   all atom 100000 trajectory.lammpstrj
 dump_modify    dump2   sort id    pbc yes
