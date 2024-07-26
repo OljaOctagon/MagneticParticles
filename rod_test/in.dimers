@@ -43,7 +43,7 @@ pair_coeff 2 2  1 0.1 0.11 10
 #unfix 1 
 restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
-fix 1 all rigid/nve molecule langevin 0.00025 0.00025 0.1 29393 
+fix 1 all rigid/nve molecule langevin 0.0025 0.0025 0.1 29393 
 #fix 1 all rigid/nvt molecule temp 0.01 0.01 5.0 reinit yes
 #fix 2 all nve/sphere update dipole
 fix 3 all enforce2d
