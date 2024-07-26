@@ -12,10 +12,13 @@ neigh_modify check yes delay 0 every 1
 neigh_modify exclude molecule/intra all
 
 mass 1 1.0
-mass 2 1.0
+mass 2 0.1 
+
+set type 1 mass 1 
+set type 2 mass 0.1 
 
 set type 1 density 1 
-set type 2 density 1
+set type 2 density 1 
 
 pair_style lj/cut/dipole/cut 1.22 10
 #pair_modify shift yes
@@ -24,30 +27,13 @@ pair_coeff 1 2  1 0.1 0.11 10
 pair_coeff 2 2  1 0.1 0.11 10
 
 
-
-#pair_coeff 2 2  0.1 0.1 0.112246 10 
-#pair_coeff 1 2  0.1 0.1 0.112246 10 
-
-
-# Small time step run 
-#fix 1 all rigid/nve molecule langevin 1.0 1.0 0.0001 39392  
-#fix 2 all nve/sphere update dipole
-#fix 3 all enforce2d
-#timestep 0.00001
-#compute T1 all temp/sphere
-#thermo_modify temp T1
-#thermo 10000
-#run 100000
-
 #  normal time step run 
-#unfix 1 
 restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
-fix 1 all rigid/nve molecule langevin 0.0025 0.0025 0.1 29393 
-#fix 1 all rigid/nvt molecule temp 0.01 0.01 5.0 reinit yes
+fix 1 all rigid/nve molecule langevin 0.004 0.004 0.1 29393 
 #fix 2 all nve/sphere update dipole
 fix 3 all enforce2d
-timestep 0.0005
+timestep 0.05
 
 compute T2 all temp/sphere
 thermo_modify temp T2
