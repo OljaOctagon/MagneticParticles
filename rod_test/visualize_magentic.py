@@ -38,14 +38,17 @@ if __name__ == "__main__":
     boxl = 40 
     radius=0.5/boxl
     
-    for j, particles_j in enumerate(range(len(frames),freq)):
-    
-        frame = np.array(particles_j)
+    for j in range(0, len(frames),freq):
+        print(j)
+        frame = np.array(frames[j])
         core_particles = frame[::2,2:4]*boxl
         patch_particles = frame[1::2,2:4]*boxl
             
         dist = (patch_particles-core_particles)
-
+        distx = np.minimum(dist[:,0],boxl-dist[:,0])
+        disty = np.minimum(dist[:,1],boxl-dist[:,1])
+        distnorm = np.sqrt(np.power(distx,2) + np.power(disty,2))
+        
         fig, ax = plt.subplots(figsize=(20,20))
         ax.set_aspect('equal')
 
@@ -55,8 +58,7 @@ if __name__ == "__main__":
         for i, center_i in enumerate(core_particles):
 
             theta1 =  np.arccos(
-                dist[i,1]/np.linalg.norm(dist[i],
-                                         axis=0))*180/np.pi
+                disty[i]/distnorm[i])*180/np.pi
         
             theta2 = theta1 - 180 
             center = (center_i[0]/boxl,center_i[1]/boxl)   
@@ -85,7 +87,7 @@ if __name__ == "__main__":
                     fc = "#F8C794", 
                     ec = "k")
             
-        plt.savefig("frame_{}.png",j,dpi=300)
-        plt.savefig("frame_{}.pdf",j,dpi=300)
+        plt.savefig("pngs/frame_{}.png".format(j),dpi=300)
+        plt.savefig("pdfs/frame_{}.pdf".format(j))
 
   
