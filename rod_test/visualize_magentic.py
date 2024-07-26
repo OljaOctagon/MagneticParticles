@@ -44,11 +44,10 @@ if __name__ == "__main__":
         core_particles = frame[::2,2:4]*boxl
         patch_particles = frame[1::2,2:4]*boxl
             
-        dist = (patch_particles-core_particles)
-        distx = np.minimum(dist[:,0],boxl-dist[:,0])
-        disty = np.minimum(dist[:,1],boxl-dist[:,1])
-        distnorm = np.sqrt(np.power(distx,2) + np.power(disty,2))
-        
+        dist = patch_particles-core_particles
+        dist = dist - boxl*np.rint(dist/boxl)
+        distnorm = np.linalg.norm(dist,axis=1)
+            
         fig, ax = plt.subplots(figsize=(20,20))
         ax.set_aspect('equal')
 
@@ -58,7 +57,7 @@ if __name__ == "__main__":
         for i, center_i in enumerate(core_particles):
 
             theta1 =  np.arccos(
-                disty[i]/distnorm[i])*180/np.pi
+                dist[i,1]/distnorm[i])*180/np.pi
         
             theta2 = theta1 - 180 
             center = (center_i[0]/boxl,center_i[1]/boxl)   
@@ -89,5 +88,6 @@ if __name__ == "__main__":
             
         plt.savefig("pngs/frame_{}.png".format(j),dpi=300)
         plt.savefig("pdfs/frame_{}.pdf".format(j))
+        plt.close(fig)
 
   
