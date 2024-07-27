@@ -1,0 +1,46 @@
+dimension 2
+units lj
+atom_style hybrid molecular sphere dipole
+region simbox block 0 40 0 40 -0.1 0.1
+create_box 2 simbox
+
+molecule dimer dimers.txt
+create_atoms 0 random 100 67865 simbox mol dimer 32332 overlap 1.0
+
+neighbor 1.0 bin
+neigh_modify check yes delay 0 every 1 
+neigh_modify exclude molecule/intra all
+
+mass 1 1.0
+mass 2 0.1 
+
+set type 1 mass 1 
+set type 2 mass 0.1 
+
+set type 1 density 1 
+set type 2 density 1 
+
+pair_style lj/cut/dipole/cut 1.122462048309373 10
+pair_coeff 1 1  1 1   1.122462048309373 10
+pair_coeff 1 2  1 0.1 0.11224620483093731 10
+pair_coeff 2 2  1 0.1 0.11224620483093731 10
+pair_modify shift yes
+
+#  normal time step run 
+restart 10000000 dimer.restart
+velocity       all create 1.0 399293 dist gaussian rot yes
+fix 1 all rigid/nve molecule langevin 0.004 0.004 0.1 29393 
+#fix 2 all nve/sphere update dipole
+fix 3 all enforce2d
+timestep 0.05
+
+compute T2 all temp/sphere
+thermo_modify temp T2
+thermo 50000
+#variable tot_pot equal epair
+#thermo_style custom step v_tot_pot temp pe press
+#fix myfile all ave/time 10000 1 10000 v_tot_pot file pe.dat
+
+dump           dump2   all atom 100000 trajectory.lammpstrj
+dump_modify    dump2   sort id    pbc yes
+run 1000000000

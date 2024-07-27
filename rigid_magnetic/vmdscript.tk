@@ -1,0 +1,11 @@
+mol modstyle 0 top "VDW" 1.0 15
+
+set sel0 [atomselect top "name 1"]
+$sel0 set radius 0.500
+$sel0 set color colorID 8
+
+set sel1 [atomselect top "name 2"]
+$sel1 set radius 0.3
+$sel1 set color colorID 10
+
+pbc box

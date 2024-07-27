@@ -1,0 +1,31 @@
+dimension 2
+units lj
+atom_style hybrid molecular sphere dipole
+region simbox block 0 35 0 35 -0.01 0.01
+create_box 2 simbox
+#lattice sq 0.05
+molecule rod rod.txt
+create_atoms 0 random 30 67865 simbox mol rod 32332 overlap 1.0
+#create_atoms 0 region simbox mol rod 32332 
+
+#set type 1 dipole 0 0.1 0 
+#set type 2 dipole 0 10 0 
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
+mass * 1.0
+pair_style lj/cut 1.122462048
+pair_modify shift yes
+pair_coeff * * 1.0 1.0 1.122462048
+comm_modify cutoff 5
+fix 1 all rigid/small molecule langevin 1.0 1.0 0.001 564302
+fix 2 all propel/self dipole 10.0
+fix 3 all enforce2d
+timestep 0.0001
+compute T1 all temp/sphere
+thermo_modify temp T1
+thermo 10000
+#dump 20 all custom 10000 Single_rod_pos_F10_Sim1.dat id type xu yu zu mux muy muz
+#dump            20       all      image 100000 rods*.png type type size 800 800 zoom 1.5 fsaa yes ssao yes 324323 0.8
+dump           dump2   all atom 100000 trajectory.lammpstrj
+dump_modify    dump2   sort id    pbc yes
+run 10000000
