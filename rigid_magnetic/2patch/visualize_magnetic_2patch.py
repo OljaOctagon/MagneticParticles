@@ -31,6 +31,9 @@ if __name__ == "__main__":
     parser.add_argument("-f", 
                         type=str, 
                         default="trajectory.lammpstrj")
+    parser.add_argument("-dipole",
+                        type=str, 
+                        default="lateral")
     args = parser.parse_args()
 
     frames = read_file(args.f)
@@ -38,7 +41,7 @@ if __name__ == "__main__":
     boxl = 40 
     radius=0.5/boxl
     
-    for j in range(0, len(frames),freq):
+    for j in range(len(frames)-1, len(frames),freq):
         print(j)
         frame = np.array(frames[j])
         core_particles = frame[::3,2:4]*boxl
@@ -65,59 +68,64 @@ if __name__ == "__main__":
             c = plt.Circle(center,
                            radius, 
                            fc='#C80036',
-                           ec="#0C1844", 
-                           lw=2,)  
+                           ec="k",)
             
       
             ax.axis("off")
             ax.add_patch(c)
-            '''
-            theta11 =  90 + np.arccos(
-                dist1[i,1]/dist1norm[i])*180/np.pi
-            theta12 = theta11 - 180     
             
-            w1 = Wedge(center, 
-                      radius, 
-                      theta11, 
-                      theta12, 
-                      width = 0.2*radius,
-                      fc='y')
+            c1x, c1y, c2x,c2y = (0,0,0,0) 
+            d1x, d1y, d2x,d2y = (0,0,0,0) 
+             
+            if args.dipole == "lateral":
+                c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                c1y = center_i[1]/boxl + dist1[i,1]/boxl
             
-            theta21 = 150 + np.arccos(
-            dist2[i,1]/dist2norm[i])*180/np.pi
-            theta22 = theta21 - 10  
-            w2 = Wedge(center, 
-                      radius, 
-                      theta21, 
-                      theta22, 
-                      width = 0.2*radius,
-                      fc='#0C1844')
-               
-            ax.add_patch(w1)
-            ax.add_patch(w2)
-            '''
+                # rotate 90 degrees 
+                d1x =  - dist1[i,1]/boxl
+                d1y =    dist1[i,0]/boxl
+            
+                c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                c2y = center_i[1]/boxl + dist2[i,1]/boxl
+            
+                # rotate 90 degrees 
+                d2x =    dist2[i,1]/boxl
+                d2y =  - dist2[i,0]/boxl
+                
+            if args.dipole == "radial":
+                c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                c1y = center_i[1]/boxl + dist1[i,1]/boxl
+            
+                d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
+                d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
+            
+                # rotate 180 degrees 
+                c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                c2y = center_i[1]/boxl + dist2[i,1]/boxl
+        
+                d2x =  d1x 
+                d2y =  d1y
+
+            
             width=0.0015
             ax.arrow(
-                    center_i[0]/boxl + dist1[i,0]/boxl, 
-                    center_i[1]/boxl + dist1[i,1]/boxl, 
-                    -dist1[i,1]/boxl, 
-                    dist1[i,0]/boxl,
+                    c1x, c1y, d1x, d1y,
                     width = width,
                     zorder = 10,
                     head_width=width*3,
-                    head_length=width*2,
-                    fc = "#0C1844")
+                    head_length=width*3,
+                    fc = "#F8C794",
+                    ec="k")
             
             ax.arrow(
-                    center_i[0]/boxl + dist2[i,0]/boxl, 
-                    center_i[1]/boxl + dist2[i,1]/boxl, 
-                    dist2[i,1]/boxl, 
-                    -dist2[i,0]/boxl,
+                    c2x,c2y,d2x,d2y,  
                     width = width,
                     zorder = 10,
                     head_width=width*3,
-                    head_length=width*2,
-                    fc = '#0C1844')
+                    head_length=width*3,
+                    fc = '#F8C794',
+                    ec = "k"
+                    )
             
         plt.savefig("pngs/frame_{}.png".format(j),dpi=300)
         plt.savefig("pdfs/frame_{}.pdf".format(j))

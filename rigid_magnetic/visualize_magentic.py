@@ -31,6 +31,8 @@ if __name__ == "__main__":
     parser.add_argument("-f", 
                         type=str, 
                         default="trajectory.lammpstrj")
+    
+    parser.add_argument("-dipole", type=str, default="lateral")
     args = parser.parse_args()
 
     frames = read_file(args.f)
@@ -38,7 +40,7 @@ if __name__ == "__main__":
     boxl = 40 
     radius=0.5/boxl
     
-    for j in range(0, len(frames),freq):
+    for j in range(len(frames)-1, len(frames),freq):
         print(j)
         frame = np.array(frames[j])
         core_particles = frame[::2,2:4]*boxl
@@ -56,35 +58,64 @@ if __name__ == "__main__":
 
         for i, center_i in enumerate(core_particles):
 
-            theta1 =  np.arccos(
-                dist[i,1]/distnorm[i])*180/np.pi
-        
-            theta2 = theta1 - 180 
-            center = (center_i[0]/boxl,center_i[1]/boxl)   
-            w = Wedge(center, 
-                      radius, 
-                      theta1, 
-                      theta2, 
-                      fc='#0C1844',
-                      edgecolor='black')
-            
-            c = plt.Circle(center,
-                           radius, 
-                           color='#C80036')
-        
-            width=0.004
+            center = (center_i[0]/boxl,center_i[1]/boxl)  
             ax.axis("off")
-            ax.add_patch(c)
-            ax.add_patch(w)
-            ax.arrow(center_i[0]/boxl, 
-                    center_i[1]/boxl, 
-                    dist[i,0]/boxl, dist[i,1]/boxl,
-                    width = width,
-                    zorder = 10,
-                    head_width=width*3,
-                    head_length=width*3,
-                    fc = "#F8C794", 
-                    ec = "k")
+            c = plt.Circle(center,
+                            radius, 
+                            color='#C80036')
+             
+            ax.add_patch(c) 
+            
+            if args.dipole == "radial": 
+                theta1 =  np.arccos(
+                    dist[i,1]/distnorm[i])*180/np.pi
+            
+                theta2 = theta1 - 180   
+                w = Wedge(center, 
+                        radius, 
+                        theta1, 
+                        theta2, 
+                        fc='#0C1844',
+                        edgecolor='black')
+                #ax.add_patch(w)
+                width=0.004
+                
+                ax.arrow(center_i[0]/boxl, 
+                        center_i[1]/boxl, 
+                        dist[i,0]/boxl, dist[i,1]/boxl,
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        fc = "#F8C794", 
+                        ec = "k")
+                
+            if args.dipole == "lateral": 
+                
+                theta1 =  np.arccos(
+                    dist[i,1]/distnorm[i])*180/np.pi
+            
+                theta2 = theta1 - 180 
+                
+                w = Wedge(center, 
+                        radius, 
+                        theta1, 
+                        theta2, 
+                        fc='#0C1844',
+                        edgecolor='black')
+                #ax.add_patch(w)
+                
+                width=0.004     
+                ax.arrow(center_i[0]/boxl + dist[i,0]/boxl, 
+                        center_i[1]/boxl + dist[i,1]/boxl, 
+                        -dist[i,1]/boxl, dist[i,0]/boxl,
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        fc = "#F8C794", 
+                        ec = "k")
+            
             
         plt.savefig("pngs/frame_{}.png".format(j),dpi=300)
         plt.savefig("pdfs/frame_{}.pdf".format(j))
