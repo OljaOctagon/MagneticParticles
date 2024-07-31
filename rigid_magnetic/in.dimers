@@ -44,3 +44,4 @@ thermo 50000
 dump           dump2   all atom 100000 trajectory.lammpstrj
 dump_modify    dump2   sort id    pbc yes
 run 1000000000
+

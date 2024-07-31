@@ -30,11 +30,14 @@ pair_modify shift yes
 #  normal time step run 
 restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
-fix g all gravity 1.0 chute 0.0
-fix floorC all  wall/reflect zlo EDGE 
-fix floorP all  wall/reflect zlo EDGE 
-fix ceiling all wall/reflect zhi EDGE 
-fix 1 all rigid/nve molecule langevin 0.005 0.005 0.001 29393 gravity g 
+thermo_modify lost warn flush yes 
+
+fix g all gravity 100.0 chute 0.0
+fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
+fix floorP all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
+fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
+
+fix 1 all rigid/nve molecule langevin 0.005 0.005 .001 29393 gravity g 
 #fix 2 all nve/sphere update dipole
 #fix 3 all enforce2d
 timestep 0.001
@@ -42,10 +45,6 @@ timestep 0.001
 compute T2 all temp/sphere
 thermo_modify temp T2
 thermo 50000
-#variable tot_pot equal epair
-#thermo_style custom step v_tot_pot temp pe press
-#fix myfile all ave/time 10000 1 10000 v_tot_pot file pe.dat
-
 dump           dump2   all atom 100000 trajectory.lammpstrj
 dump_modify    dump2   sort id    pbc yes
 run 1000000000
