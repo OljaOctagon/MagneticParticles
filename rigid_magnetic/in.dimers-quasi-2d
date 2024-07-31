@@ -2,7 +2,7 @@ dimension 3
 boundary p p f 
 units lj
 atom_style hybrid molecular sphere dipole
-region simbox block 0 40 0 40 0 40 
+region simbox block 0 40 0 40 0 2 
 create_box 2 simbox
 
 molecule dimer dimers.txt
@@ -32,12 +32,7 @@ restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
 thermo_modify lost warn flush yes 
 
-fix g all gravity 100.0 chute 0.0
-fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
-fix floorP all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
-fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
-
-fix 1 all rigid/nve molecule langevin 0.0001 0.0001 0.1 29393 gravity g 
+fix 1 all rigid/nve molecule langevin 0.00006 0.00006 0.1 29393 
 timestep 0.005
 
 compute T2 all temp/sphere
