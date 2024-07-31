@@ -30,14 +30,14 @@ pair_modify shift yes
 #  normal time step run 
 restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
-fix g all gravity 1.0
+fix g all gravity 1.0 chute 0.0
 fix floorC all  wall/reflect zlo EDGE 
 fix floorP all  wall/reflect zlo EDGE 
 fix ceiling all wall/reflect zhi EDGE 
-fix 1 all rigid/nve molecule langevin 0.004 0.004 0.1 29393 gravity g 
+fix 1 all rigid/nve molecule langevin 0.005 0.005 0.001 29393 gravity g 
 #fix 2 all nve/sphere update dipole
 #fix 3 all enforce2d
-timestep 0.05
+timestep 0.001
 
 compute T2 all temp/sphere
 thermo_modify temp T2
