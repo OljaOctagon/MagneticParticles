@@ -37,10 +37,8 @@ fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
 fix floorP all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
 fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
 
-fix 1 all rigid/nve molecule langevin 0.005 0.005 .001 29393 gravity g 
-#fix 2 all nve/sphere update dipole
-#fix 3 all enforce2d
-timestep 0.001
+fix 1 all rigid/nve molecule langevin 0.0001 0.0001 0.1 29393 gravity g 
+timestep 0.005
 
 compute T2 all temp/sphere
 thermo_modify temp T2
