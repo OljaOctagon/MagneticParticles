@@ -33,13 +33,8 @@ restart 10000000 dimer.restart
 velocity       all create 1.0 893 dist gaussian rot yes
 #thermo_modify lost warn flush yes 
 
-
-fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
-fix floorP all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
-fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
-
-fix 1 all rigid/nve molecule langevin 0.00006 0.00006 0.3 1010103
-timestep 0.02
+fix 1 all rigid/nve molecule langevin 0.006 0.006 0.01 1010103
+timestep 0.0001
 
 compute T2 all temp/sphere
 thermo_modify temp T2
