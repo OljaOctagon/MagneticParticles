@@ -3,10 +3,11 @@ boundary p p f
 units lj
 atom_style hybrid molecular sphere dipole
 region simbox block 0 40 0 40 0 2 
+region pbox block 0 40 0 40 1 1.1
 create_box 2 simbox
 
 molecule dimer dimers.txt
-create_atoms 0 random 100 67865 simbox mol dimer 32332 overlap 1.0
+create_atoms 0 random 100 ${seed} pbox mol dimer 32332 overlap 1.0
 
 neighbor 1.0 bin
 neigh_modify check yes delay 0 every 1 
@@ -30,7 +31,7 @@ pair_modify shift yes
 #  normal time step run 
 restart 10000000 dimer.restart
 velocity       all create 1.0 399293 dist gaussian rot yes
-thermo_modify lost warn flush yes 
+#thermo_modify lost warn flush yes 
 
 fix 1 all rigid/nve molecule langevin 0.00006 0.00006 0.1 29393 
 timestep 0.005
