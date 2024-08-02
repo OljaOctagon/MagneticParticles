@@ -19,6 +19,23 @@ for i, sphere in enumerate(sphere_location):
         segments=64, 
         ring_count=32, 
         radius=0.5, 
-        location=(sphere[0],sphere[1],sphere[2]))        
-    bpy.context.selected_objects[0].name = "MySphere{}".format(i)
+        location=(sphere[0],sphere[1],sphere[2]))  
+    obj = bpy.context.object
+  
+    mat = bpy.data.materials.new("Blue")
+
+    # Activate its nodes
+    mat.use_nodes = True
+
+    # Get the principled BSDF (created by default)
+    principled = mat.node_tree.nodes['Principled BSDF']
+
+    # Assign the color
+    r,g,b = np.random.rand(3)
+    principled.inputs['Base Color'].default_value = (r,g,b,1)
+
+    # Assign the material to the object
+    obj.data.materials.append(mat)
+    
+    #bpy.context.selected_objects[0].name = "MySphere{}".format(i)
     
