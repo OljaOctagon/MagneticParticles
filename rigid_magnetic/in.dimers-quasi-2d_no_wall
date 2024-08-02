@@ -7,7 +7,7 @@ region pbox block 0 70 0 70 1 1.1
 create_box 2 simbox
 
 molecule dimer dimers.txt
-create_atoms 0 random 100 ${seed} pbox mol dimer 1929 overlap 1.0
+create_atoms 0 random 200 ${seed} pbox mol dimer 1929 overlap 1.0
 
 neighbor 1.0 bin
 neigh_modify check yes delay 0 every 1 
@@ -31,9 +31,9 @@ pair_modify shift yes
 #  normal time step run 
 restart 10000000 dimer.restart
 velocity       all create 1.0 893 dist gaussian rot yes
-#thermo_modify lost warn flush yes 
+thermo_modify lost warn flush yes 
 
-fix 1 all rigid/nve molecule langevin 0.006 0.006 0.01 1010103
+fix 1 all rigid/nve molecule langevin 0.00033 0.00033 0.01 1010103
 timestep 0.0001
 
 compute T2 all temp/sphere
@@ -42,6 +42,6 @@ thermo 50000
 dump           trajdump   all atom 100000 trajectory.lammpstrj
 dump_modify    trajdump   sort id    pbc yes
 
-dump mdipole all custom 100000 mu.dump.* id type x y z mux muy muz 
+dump mdipole all custom 1000000 mu.dump.* id type x y z mux muy muz 
 dump_modify  mdipole   sort id    pbc yes
 run 1000000000
