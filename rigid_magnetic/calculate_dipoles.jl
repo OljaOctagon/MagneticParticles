@@ -1,13 +1,14 @@
 
 
 function read_file(file)
-    particle = zeros(Float64, (100, 3))
-    patch1 = zeros(Float64, (100, 3))
-    patch2 = zeros(Float64, (100, 3))
+    Np = 200
+    particle = zeros(Float64, (Np, 3))
+    patch1 = zeros(Float64, (Np, 3))
+    patch2 = zeros(Float64, (Np, 3))
 
-    mu_particle = zeros(Float64, (100, 3))
-    mu_patch1 = zeros(Float64, (100, 3))
-    mu_patch2 = zeros(Float64, (100, 3))
+    mu_particle = zeros(Float64, (Np, 3))
+    mu_patch1 = zeros(Float64, (Np, 3))
+    mu_patch2 = zeros(Float64, (Np, 3))
 
     open(file) do f
 
@@ -50,93 +51,95 @@ end
 particle, patch1, patch2, mp, m1, m2 = read_file("mu_3dtest.txt")
 
 boxL = [20, 20, 20]
-Np = len(particles)
+Np = 200
 
-D11 = zeros(Float64,(Np,Np,3))
-D22 = zeros(Float64,(Np,Np,3))
-D12 = zeros(Float64,(Np,Np,3))
-D21 = zeros(Float64,(Np,Np,3))
+D11 = zeros(Float64, (Np, Np, 3))
+D22 = zeros(Float64, (Np, Np, 3))
+D12 = zeros(Float64, (Np, Np, 3))
+D21 = zeros(Float64, (Np, Np, 3))
 
-D11_norm = eros(Float64,(Np,Np))
-D22_norm = zeros(Float64,(Np,Np))
-D12_norm = zeros(Float64,(Np,Np))
-D21_norm = zeros(Float64,(Np,Np))
+D11_norm = zeros(Float64, (Np, Np))
+D22_norm = zeros(Float64, (Np, Np))
+D12_norm = zeros(Float64, (Np, Np))
+D21_norm = zeros(Float64, (Np, Np))
+
+function dist(p1, p2)
+
+    dist = p1 .- p2
+    dist = dist .- boxL .* round.(dist ./ boxL)
+    dnorm = sqrt(dist[1]^2 + dist[2]^2 + dist[3]^2)
+
+    return dist, dnorm
+
+end
 
 for i = 1:Np
     for j = 1:Np
-        if i<j
-            dist11 = patch1[i] - patch1[j]
-            dist11 = dist11 - boxL * rint(dist11/boxL) 
-            D11[i,j] = dist11
-            D11[j,i] = -dist11 
+        if i < j
 
-            D11_norm[i,j] = sqrt(dist11[1]^2 + dist11[2]^2 + dist11[3]^2)
-            D11_norm[j,i] = D11_norm[i,j]
-            
-            dist22 = patch2[i] - patch2[j]
-            dist22 = dist22 - boxL * rint(dist22/boxL) 
-            D22[i,j] = dist22
-            D22[j,i] = -dist22
+            D11[i, j, :], D11_norm[i, j] = dist(patch1[i, :], patch1[j, :])
+            D11[j, i, :] = D11[j, i, :]
+            D11_norm[j, i] = D11_norm[i, j]
 
-            D22_norm[i,j] = sqrt(dist22[1]^2 + dist22[2]^2 + dist22[3]^2)
-            D22_norm[j,i] = D22_norm[i,j]
+            D22[i, j, :], D22_norm[i, j] = dist(patch2[i, :], patch2[j, :])
+            D22[j, i, :] = D22[j, i, :]
+            D22_norm[j, i] = D22_norm[i, j]
 
-            dist12 = patch1[i] - patch2[j]
-            dist12 = dist12 - boxL * rint(dist12/boxL) 
-            D12[i,j] = dist12
-            D12[j,i] = -dist12
+            D12[i, j, :], D12_norm[i, j] = dist(patch1[i, :], patch2[j, :])
+            D12[j, i, :] = D12[j, i, :]
+            D12_norm[j, i] = D12_norm[i, j]
 
-            D12_norm[i,j] = sqrt(dist12[1]^2 + dist12[1]^2 + dist12[3]^2)
-            D12_norm[j,i] = D12_norm[i,j]
+            D21[i, j, :], D21_norm[i, j] = dist(patch2[i, :], patch1[j, :])
+            D21[j, i, :] = D21[j, i, :]
+            D21_norm[j, i] = D21_norm[i, j]
 
-            dist21 = patch2[i] - patch1[j]
-            dist21 = dist21 - boxL * rint(dist21/boxL) 
-            D21[i,j] = dist21
-            D21[j,i] = -dist21
-
-            D21_norm[i,j] = sqrt(dist21[1]^2 + dist21[1]^2 + dist21[3]^2)
-            D21_norm[j,i] = D21_norm[i,j]
-
-        end 
+        end
     end
 end
 
-function U_dipolar(i, j, Dist, mi, mj)
+function Ud_ij(i, j, dij, dij_norm, mi, mj)
 
-    dij = Dist[i,j]
-
-    dnorm = sqrt(dij[1]^2 + dij[2]^2 + dij[3]^2)
-    Udij = -3 * dot(mi, dij) * dot(mj, dij) / dnorm^5 + dot(mi, mj) / dnorm^3
+    Udij = -3 * dot(mi, dij) * dot(mj, dij) / dij_norm^5 + dot(mi, mj) / dij_norm^3
     return Udij
+
 end
 
-function U_polar(i)
-    Udi = 0 
-    cut_off = 10 
+function Ud_i(i)
+
+    Udi = 0
+    cut_off = 10
 
     for j in 1:Np
-        if i!=j
+        if i != j
             # patch-i-1-patch-j-1 
-            if D11_norm[i,j] < cut_off
-                Udi += U_dipolar(i,j,D11,m1[i],m1[j])
+            if D11_norm[i, j] < cut_off
+                Udi += Ud_ij(i, j, D11, m1[i, :], m1[j, :])
             end
 
             # patch-i-2-patch-j-2
-            if D22_norm[i,j] < cut_off
-                Udi += U_dipolar(i,j,D22,m2[i],m2[j])
+            if D22_norm[i, j] < cut_off
+                Udi += Ud_ij(i, j, D22, m2[i], m2[j])
             end
 
             # patch-i-1-patch-j-2 
-            if D12_norm[i,j] < cut_off
-                Udi += U_dipolar(i,j,D12,m1[i],m2[j])
+            if D12_norm[i, j] < cut_off
+                Udi += Ud_ij(i, j, D12, m1[i], m2[j])
             end
 
             # patch-i-2-patch-j-1 
-            if D21_norm[i,j] < cut_off
-                Udi += U_dipolar(i,j,D21,m1[j],m2[i])
+            if D21_norm[i, j] < cut_off
+                Udi += Ud_ij(i, j, D21, m1[j], m2[i])
             end
 
-        end 
-
-    return Udi 
+        end
+    end
+    return Udi
 end
+
+U = zeros(Float64, Np)
+for i in 1:Np
+    U[i] = Ud_i(i)
+
+end
+
+print(U)
