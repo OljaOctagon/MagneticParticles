@@ -113,22 +113,22 @@ function Ud_i(i)
         if i != j
             # patch-i-1-patch-j-1 
             if D11_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D11, m1[i, :], m1[j, :])
+                Udi += Ud_ij(i, j, D11[i, j, :], D11_norm[i, j], m1[i, :], m1[j, :])
             end
 
             # patch-i-2-patch-j-2
             if D22_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D22, m2[i], m2[j])
+                Udi += Ud_ij(i, j, D22[i, j, :], D22_norm[i, j], m2[i], m2[j])
             end
 
             # patch-i-1-patch-j-2 
             if D12_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D12, m1[i], m2[j])
+                Udi += Ud_ij(i, j, D12[i, j, ;], D12_norm[i, j], m1[i], m2[j])
             end
 
             # patch-i-2-patch-j-1 
             if D21_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D21, m1[j], m2[i])
+                Udi += Ud_ij(i, j, D21[i, j, :], D21[i, j], m1[j], m2[i])
             end
 
         end
