@@ -49,7 +49,7 @@ function read_file(file)
     return particle, patch1, patch2, mu_particle, mu_patch1, mu_patch2
 end
 
-particle, patch1, patch2, mp, m1, m2 = read_file("mu_3dtest.txt")
+particle, patch1, patch2, mp, m1, m2 = read_file("blender_spheres.txt")
 
 boxL = [20, 20, 20]
 Np = 200
