@@ -1,4 +1,5 @@
 
+using LinearAlgebra
 
 function read_file(file)
     Np = 200
@@ -97,8 +98,7 @@ for i = 1:Np
     end
 end
 
-function Ud_ij(i, j, dij, dij_norm, mi, mj)
-
+function Ud_ij(dij, dij_norm, mi, mj)
     Udij = -3 * dot(mi, dij) * dot(mj, dij) / dij_norm^5 + dot(mi, mj) / dij_norm^3
     return Udij
 
@@ -113,22 +113,22 @@ function Ud_i(i)
         if i != j
             # patch-i-1-patch-j-1 
             if D11_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D11[i, j, :], D11_norm[i, j], m1[i, :], m1[j, :])
+                Udi += Ud_ij(D11[i, j, :], D11_norm[i, j], m1[i, :], m1[j, :])
             end
 
             # patch-i-2-patch-j-2
             if D22_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D22[i, j, :], D22_norm[i, j], m2[i], m2[j])
+                Udi += Ud_ij(D22[i, j, :], D22_norm[i, j], m2[i, :], m2[j, :])
             end
 
             # patch-i-1-patch-j-2 
             if D12_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D12[i, j, ;], D12_norm[i, j], m1[i], m2[j])
+                Udi += Ud_ij(D12[i, j, :], D12_norm[i, j], m1[i, :], m2[j, :])
             end
 
             # patch-i-2-patch-j-1 
             if D21_norm[i, j] < cut_off
-                Udi += Ud_ij(i, j, D21[i, j, :], D21[i, j], m1[j], m2[i])
+                Udi += Ud_ij(D21[i, j, :], D21_norm[i, j], m1[j, :], m2[i, :])
             end
 
         end
@@ -142,4 +142,8 @@ for i in 1:Np
 
 end
 
-print(U)
+open("dipole_per_particle.txt", "w") do f
+    for i in 1:Np
+        println(f, U[i])
+    end
+end
