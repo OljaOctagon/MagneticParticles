@@ -17,4 +17,8 @@ thermo 50000
 
 dump           dump2   all atom 100000 trajectory.lammpstrj
 dump_modify    dump2   sort id    pbc yes
+
+dump mdipole all custom 1000000 mu.dump.* id type x y z mux muy muz 
+dump_modify  mdipole   sort id    pbc yes
+
 run 1000000000
