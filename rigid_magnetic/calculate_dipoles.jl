@@ -1,6 +1,5 @@
-
 using LinearAlgebra
-
+using ArgParse
 
 # read file for 2 patch systems 
 function read_file_two_patch(file, Np)
@@ -93,12 +92,13 @@ end
 # calculate pair distances between patches 
 function dist(p1, p2, boxL, ndim)
 
-    if ndim == 3 
-        Lbc = boxL 
-    end 
+    if ndim == 3
+        Lbc = boxL
+    end
 
-    if ndim == 2 
-        Lbc = [boxL[1],boxL[2], 1000]
+    if ndim == 2
+        Lbc = [boxL[1], boxL[2], 1000]
+    end
 
     dist = p1 .- p2
     dist = dist .- boxL .* round.(dist ./ Lbc)
@@ -108,15 +108,16 @@ function dist(p1, p2, boxL, ndim)
 
 end
 
+
 # calculate dipole-dipole pair potential 
 function Ud_ij(dij, dij_norm, mi, mj)
-    Udij = -3 * dot(mi, dij) * dot(mj, dij) / dij_norm^5 + dot(mi, mj) / dij_norm^3
+    Udij = (-3 * dot(mi, dij) * dot(mj, dij) / dij_norm^5) + (dot(mi, mj) / dij_norm^3)
     return Udij
 
 end
 
 # write file 
-function write_file()
+function write_file(U, Np)
     open("dipole_per_particle.txt", "w") do f
         for i in 1:Np
             println(f, U[i])
@@ -125,7 +126,7 @@ function write_file()
 end
 
 
-function dipole_two_patch(Np, boxL, file)
+function dipole_two_patch(Np, boxL, file, ndim)
 
     particle, patch1, patch2, mp, m1, m2 = read_file_two_patch(file, Np)
 
@@ -139,24 +140,23 @@ function dipole_two_patch(Np, boxL, file)
     D12_norm = zeros(Float64, (Np, Np))
     D21_norm = zeros(Float64, (Np, Np))
 
-
     for i = 1:Np
         for j = 1:Np
             if i < j
 
-                D11[i, j, :], D11_norm[i, j] = dist(patch1[i, :], patch1[j, :], boxL)
+                D11[i, j, :], D11_norm[i, j] = dist(patch1[i, :], patch1[j, :], boxL, ndim)
                 D11[j, i, :] = D11[j, i, :]
                 D11_norm[j, i] = D11_norm[i, j]
 
-                D22[i, j, :], D22_norm[i, j] = dist(patch2[i, :], patch2[j, :], boxL)
+                D22[i, j, :], D22_norm[i, j] = dist(patch2[i, :], patch2[j, :], boxL, ndim)
                 D22[j, i, :] = D22[j, i, :]
                 D22_norm[j, i] = D22_norm[i, j]
 
-                D12[i, j, :], D12_norm[i, j] = dist(patch1[i, :], patch2[j, :], boxL)
+                D12[i, j, :], D12_norm[i, j] = dist(patch1[i, :], patch2[j, :], boxL, ndim)
                 D12[j, i, :] = D12[j, i, :]
                 D12_norm[j, i] = D12_norm[i, j]
 
-                D21[i, j, :], D21_norm[i, j] = dist(patch2[i, :], patch1[j, :], boxL)
+                D21[i, j, :], D21_norm[i, j] = dist(patch2[i, :], patch1[j, :], boxL, ndim)
                 D21[j, i, :] = D21[j, i, :]
                 D21_norm[j, i] = D21_norm[i, j]
 
@@ -202,22 +202,21 @@ function dipole_two_patch(Np, boxL, file)
 
     end
 
-    write_file()
+    write_file(U, Np)
 end
 
-function dipole_one_patch(Np, boxL, file)
+function dipole_one_patch(Np, boxL, file, ndim)
 
-    particle, patch1, mp, m1 = read_file_two_patch(file, Np)
-
+    particle, patch1, mp, m1 = read_file_one_patch(file, Np)
     D11 = zeros(Float64, (Np, Np, 3))
     D11_norm = zeros(Float64, (Np, Np))
-
+    print
     for i = 1:Np
         for j = 1:Np
             if i < j
 
-                D11[i, j, :], D11_norm[i, j] = dist(patch1[i, :], patch1[j, :], boxL)
-                D11[j, i, :] = D11[j, i, :]
+                D11[i, j, :], D11_norm[i, j] = dist(patch1[i, :], patch1[j, :], boxL, ndim)
+                D11[j, i, :] = -D11[j, i, :]
                 D11_norm[j, i] = D11_norm[i, j]
 
             end
@@ -243,10 +242,9 @@ function dipole_one_patch(Np, boxL, file)
     U = zeros(Float64, Np)
     for i in 1:Np
         U[i] = Ud_i_one_patch(i)
-
     end
 
-    write_file()
+    write_file(U, Np)
 end
 
 function parse_commandline()
@@ -282,25 +280,34 @@ end
 
 function main()
 
-    file = "blender_spheres.txt"
-    Np = 200
-    boxL = [20, 20, 20]
-    npatch = 2
-    
-    parsed_args = parse_commandline()
-    
-    for (arg,val) in parsed_args
-        println("  $arg  =>  $val")
-    end
+    #file = "blender_spheres.txt"
+    #Np = 100
+    #boxL = [20, 20, 20]
+    #npatch = 2
+    #ndim = 3
+    #file = "blender_spheres_one_patch.txt"
+    file = "blender_spheres_one_patch_linear_chains_0.2.txt"
+    Np = 100
+    #boxL = [120, 120, 0.1]
+    boxL = [40, 40, 0.1]
+    npatch = 1
+    ndim = 2
+
+    #parsed_args = parse_commandline()
+
+    #for (arg,val) in parsed_args
+    #    println("  $arg  =>  $val")
+    #end
 
     if npatch == 1
-        dipole_two_patch(Np, boxL, file)
+        dipole_one_patch(Np, boxL, file, ndim)
     end
 
     if npatch == 2
-        dipole_one_patch(Np, boxL, file)
+        dipole_two_patch(Np, boxL, file, ndim)
     end
 
 end
 
 main()
+
