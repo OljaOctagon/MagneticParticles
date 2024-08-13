@@ -18,10 +18,16 @@ function read_file_two_patch(file, Np)
         line = 0
         iter = 1
         i = 1
+
+        # skip first nine lines
+        for i in 1:9
+            readline(f)
+        end
+
         # read till end of file
         while !eof(f)
 
-            # read a new / next line for every iteration           
+            # read a new / next line for every iteration    
             s = readline(f)
             line += 1
             number, type, x, y, z, mux, muy, muz = split(s, " ")
@@ -64,8 +70,14 @@ function read_file_one_patch(file, Np)
         # line_number
         line = 0
         i = 1
+        # skip first nine lines
+        for i in 1:9
+            s = readline(f)
+        end
+
         # read till end of file
         while !eof(f)
+
             # read a new / next line for every iteration           
             s = readline(f)
             line += 1
@@ -117,8 +129,9 @@ function Ud_ij(dij, dij_norm, mi, mj)
 end
 
 # write file 
-function write_file(U, Np)
-    open("dipole_per_particle.txt", "w") do f
+function write_file(U, Np, file)
+
+    open("DIPOLE_" * file, "w") do f
         for i in 1:Np
             println(f, U[i])
         end
@@ -202,7 +215,7 @@ function dipole_two_patch(Np, boxL, file, ndim)
 
     end
 
-    write_file(U, Np)
+    write_file(U, Np, file)
 end
 
 function dipole_one_patch(Np, boxL, file, ndim)
@@ -244,60 +257,29 @@ function dipole_one_patch(Np, boxL, file, ndim)
         U[i] = Ud_i_one_patch(i)
     end
 
-    write_file(U, Np)
+    write_file(U, Np, file)
 end
 
 function parse_commandline()
     s = ArgParseSettings()
 
     @add_arg_table s begin
-        "--file", "-f"
+        "arg1"
         help = "file input"
-        "-lx"
-        help = "box length in xdim"
-        required = true
-        arg_type = Float64
-        "-ly"
-        help = "box length in ydim"
-        required = true
-        arg_type = Float64
-        "-lz"
-        help = "box length in zdim"
-        arg_type = Float64
-        required = true
-        "-p"
-        help = "number of patches"
-        required = true
-        "-dim"
-        help = "dimension, options: 3, 2"
-        arg_type = Int
         required = true
     end
-
     return parse_args(s)
 end
 
 
 function main()
 
-    #file = "blender_spheres.txt"
-    #Np = 100
-    #boxL = [20, 20, 20]
-    #npatch = 2
-    #ndim = 3
-    #file = "blender_spheres_one_patch.txt"
-    file = "blender_spheres_one_patch_linear_chains_0.2.txt"
-    Np = 100
-    #boxL = [120, 120, 0.1]
-    boxL = [40, 40, 0.1]
-    npatch = 1
-    ndim = 2
-
-    #parsed_args = parse_commandline()
-
-    #for (arg,val) in parsed_args
-    #    println("  $arg  =>  $val")
-    #end
+    args = parse_commandline()
+    file = args["arg1"]
+    Np = 200
+    boxL = [20, 20, 20]
+    npatch = 2
+    ndim = 3
 
     if npatch == 1
         dipole_one_patch(Np, boxL, file, ndim)
