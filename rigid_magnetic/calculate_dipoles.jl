@@ -1,5 +1,33 @@
 using LinearAlgebra
 using ArgParse
+using DelimitedFiles
+
+function read_file(file)
+
+    # data columns: id, molid, type, x, y ,z, mux, muy, muz
+    data = readdlm(file, delim=' ', eol='\n', skipstart=9)
+    Np = maximum(data[:,2])
+
+   
+    #mutable struct particle
+    #    id::UInt32
+    #    pos::zeros(Float64,3)
+    #    mu::zeros(Float64,3)
+    #    npatch::UInt32
+    #end
+    
+    #mystruct() = mystruct(0,0,0)
+    
+    #size = 3
+    
+    #a = Array{mystruct, 3}(undef, size, size, size)
+    
+    
+    #for i in eachindex(a)
+    #    a[i] = mystruct()
+    #end
+    return data, Np 
+end
 
 # read file for 2 patch systems 
 function read_file_two_patch(file, Np)
