@@ -2,8 +2,8 @@ dimension 3
 boundary p p f
 units lj
 atom_style hybrid molecular sphere dipole
-region simbox block 0 70 0 70 0 3  
-region pbox block 0 70 0 70 1.45 1.55
+region simbox block 0 120 0 120 0 3  
+region pbox block 0 120 0 120 1.45 1.55
 create_box 2 simbox
 
 molecule dimer dimers.txt
@@ -24,8 +24,8 @@ set type 2 density 1
 
 pair_style lj/cut/dipole/cut 1.122462048309373 10
 pair_coeff 1 1  1 1   1.122462048309373 10
-pair_coeff 1 2  1 0.05 0.5612310241546865 10
-pair_coeff 2 2  1 0.05 0.5612310241546865 10
+pair_coeff 1 2  1 0.1 0.11224620483093731 10
+pair_coeff 2 2  1 0.1 0.11224620483093731 10
 pair_modify shift yes
 
 #  normal time step run 
@@ -35,8 +35,9 @@ velocity       all create 1.0 893 dist gaussian rot yes
 
 fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
 fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
+fix electric all efield 0.0 1.0 0.0 
 
-fix 1 all rigid/nve molecule langevin 0.0003333 0.000333 0.3 1010103
+fix 1 all rigid/nve molecule langevin 0.000333 0.000333 0.3 1010103
 timestep 0.01
 
 compute T2 all temp/sphere
@@ -45,6 +46,6 @@ thermo 50000
 dump           trajdump   all atom 100000 trajectory.lammpstrj
 dump_modify    trajdump   sort id    pbc yes
 
-dump mdipole all custom 1000000 mu.dump.* id mol type x y z mux muy muz 
+dump mdipole all custom 1000000 mu.dump.* id type x y z mux muy muz 
 dump_modify  mdipole   sort id    pbc yes
 run 1000000000

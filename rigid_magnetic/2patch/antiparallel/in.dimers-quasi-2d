@@ -2,8 +2,8 @@ dimension 3
 boundary p p f
 units lj
 atom_style hybrid molecular sphere dipole
-region simbox block 0 70 0 70 0 3  
-region pbox block 0 70 0 70 1.45 1.55
+region simbox block 0 120 0 120 0 3  
+region pbox block 0 120 0 120 1.45 1.55
 create_box 2 simbox
 
 molecule dimer dimers.txt
@@ -45,6 +45,6 @@ thermo 50000
 dump           trajdump   all atom 100000 trajectory.lammpstrj
 dump_modify    trajdump   sort id    pbc yes
 
-dump mdipole all custom 1000000 mu.dump.* id mol type x y z mux muy muz 
+dump mdipole all custom 1000000 mu.dump.* id type x y z mux muy muz 
 dump_modify  mdipole   sort id    pbc yes
 run 1000000000
