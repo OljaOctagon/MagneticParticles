@@ -31,25 +31,39 @@ pair_modify shift yes
 #  normal time step run 
 restart 1000000 mag2patch.restart
 velocity       all create 1.0 ${seed3} dist gaussian rot yes
-#thermo_modify lost warn flush yes 
 
 fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
 fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
 
-fix 1 all rigid/nve molecule langevin ${temp} ${temp} 0.3 ${seed4}
+
+# equilibration run 
+fix 1  all rigid/nve molecule langevin 1 1 0.3 ${seed4}
 timestep 0.005
 
 compute T2 all temp/sphere
 thermo_modify temp T2
 
-
 thermo 100000
 variable mypot equal epair 
-fix energy_output all ave/time 1 1 100000 v_mypot file poteng.dat
+fix EQ_energy_output all ave/time 1 1 1000 v_mypot file EQ_poteng.dat
 
-dump trjdump  all atom 1000000 traj.gz
+run 20000
+
+# Assembly run
+unfix 1  
+fix 1 all rigid/nve molecule langevin ${temp} ${temp} 0.3 ${seed5}}
+timestep 0.005
+
+compute T2 all temp/sphere
+thermo_modify temp T2
+
+thermo 10000
+variable mypot equal epair 
+fix energy_output all ave/time 1 1 1000 v_mypot file poteng.dat
+
+dump trjdump  all atom 1000 traj.gz
 dump_modify trjdump sort id    pbc yes
 
 dump mdipole all custom 1000 mu.gz id mol type x y z mux muy muz 
 dump_modify  mdipole   sort id    pbc yes
-run 10000000
+run 100000
