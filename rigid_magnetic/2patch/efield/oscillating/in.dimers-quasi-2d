@@ -1,0 +1,56 @@
+dimension 3
+boundary p p f
+units lj
+atom_style hybrid molecular sphere dipole
+region simbox block 0 120 0 120 0 3  
+region pbox block 0 120 0 120 1.45 1.55
+create_box 2 simbox
+
+molecule dimer dimers.txt
+create_atoms 0 random 200 ${seed} pbox mol dimer 1929 overlap 1.0
+
+neighbor 1.0 bin
+neigh_modify check yes delay 0 every 1 
+neigh_modify exclude molecule/intra all
+
+mass 1 1.0
+mass 2 0.1 
+
+set type 1 mass 1 
+set type 2 mass 0.1 
+
+set type 1 density 1 
+set type 2 density 1 
+
+pair_style lj/cut/dipole/cut 1.122462048309373 10
+pair_coeff 1 1  1 1   1.122462048309373 10
+pair_coeff 1 2  1 0.1 0.11224620483093731 10
+pair_coeff 2 2  1 0.1 0.11224620483093731 10
+pair_modify shift yes
+
+#  normal time step run 
+restart 10000000 dimer.restart
+velocity       all create 1.0 893 dist gaussian rot yes
+#thermo_modify lost warn flush yes 
+
+fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
+fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
+
+variable E0 equal 1.0 
+variable ex equal v_E0*cos(50*time)
+variable ey equal v_E0*sin(50*time)
+
+fix electric all efield v_ex v_ey 0.0 
+
+fix 1 all rigid/nve molecule langevin 0.000333 0.000333 0.3 1010103
+timestep 0.01
+
+compute T2 all temp/sphere
+thermo_modify temp T2
+thermo 50000
+dump           trajdump   all atom 100000 trajectory.lammpstrj
+dump_modify    trajdump   sort id    pbc yes
+
+dump mdipole all custom 1000000 mu.dump.* id type x y z mux muy muz 
+dump_modify  mdipole   sort id    pbc yes
+run 1000000000
