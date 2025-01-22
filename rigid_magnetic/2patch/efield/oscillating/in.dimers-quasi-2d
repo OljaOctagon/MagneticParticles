@@ -37,8 +37,8 @@ fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373
 fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
 
 variable E0 equal 1.0 
-variable ex equal v_E0*cos(50*time)
-variable ey equal v_E0*sin(50*time)
+variable ex equal v_E0*cos(10*time)
+variable ey equal v_E0*sin(10*time)
 
 fix electric all efield v_ex v_ey 0.0 
 
