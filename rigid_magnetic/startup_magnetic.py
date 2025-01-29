@@ -2,6 +2,7 @@ import shutil
 import os 
 import numpy as np 
 import shutil 
+import re
 
 def U2_chain(s):
     sigma=1 
@@ -82,6 +83,15 @@ if __name__ == "__main__":
                          mu_squared = 0.1 
                          RE_lbda = inverted_renormalize_lbda(lbda,shift)
                          temp = mu_squared/RE_lbda
+
+                         src_file = os.path.join(parent_dir, "2patch.txt")
+                         with open(src_file, "r") as sources:
+                              lines = sources.readlines()
+                        
+                         with open(src_file, "w") as sources:
+                            for line in lines:
+                                 sources.write(re.sub(r'^# deb', 'deb', line))
+
                          # SED 
 
 
