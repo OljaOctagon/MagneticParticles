@@ -52,9 +52,11 @@ def inverted_renormalize_lbda(lbda,s):
 if __name__ == "__main__":
     
     # define lambda 
-    Lbdas = np.array([1,1.5,2,2.3,2.5,3,3.5,4,4.5,5,6,7,8,9,10,15,20,25,30,35,40,50,100])
-    Nruns = np.arange(1,8)
-    Shifts = np.linspace(0,0.7,0.1)
+    #Lbdas = np.array([1,1.5,2,2.3,2.5,3,3.5,4,4.5,5,6,7,8,9,10,15,20,25,30,35,40,50,60,70,80,90,100,120, 150,170,200,400])
+    Lbdas = np.array([1,1.5,2,2.3,2.5])
+    Nruns = np.arange(1,3)
+    #Shifts = np.linspace(0,0.8,33)
+    Shifts = np.linspace(0,0.4,5)
 
     for irun in Nruns:
            for shift in Shifts:
@@ -62,7 +64,8 @@ if __name__ == "__main__":
                          
                          # 1. make new directory 
                          parent_dir = os.getcwd()
-                         dir = "mag2p_shift_{}_lambda_{}_phi2d_0.0106_rid_{}".format(shift,lbda,irun)
+                         shift_str = np.round(shift,2)
+                         dir = "mag2p_shift_{}_lambda_{}_phi2d_0.0106_rid_{}".format(shift_str,lbda,irun)
                          path = os.path.join(parent_dir, dir)
                          print(path)
                          os.mkdir(path)
@@ -84,21 +87,34 @@ if __name__ == "__main__":
                          RE_lbda = inverted_renormalize_lbda(lbda,shift)
                          temp = mu_squared/RE_lbda
 
-                         src_file = os.path.join(parent_dir, "2patch.txt")
+                         src_file = os.path.join(parent_dir, dir, "runlammps.sh")
                          with open(src_file, "r") as sources:
                               lines = sources.readlines()
                         
                          with open(src_file, "w") as sources:
                             for line in lines:
-                                 sources.write(re.sub(r'^# deb', 'deb', line))
+                                 sources.write(re.sub("Temperature", "{}".format(temp), line))
 
-                         # SED 
+                        # 4. set shift in lammps molecule input file 
+                         src_file = os.path.join(parent_dir, dir,"2patch.txt")
+                         with open(src_file, "r") as sources:
+                              lines = sources.readlines()
+                        
+                         shift1 = np.round(shift/2,2)   
+                         dst_file = os.path.join(parent_dir, dir,"2patch.txt")
+                         with open(dst_file, "w") as sources:
+                            for line in lines:
+                                 sources.write(re.sub("s1", "{}".format(shift1), line))
+                     
+                         src_file = os.path.join(parent_dir, dir,"2patch.txt")
+                         with open(src_file, "r") as sources:
+                              lines = sources.readlines()
 
-
-                         # 4 set sfhit in lammps molecule input file 
-                         # SED 
-
-
+                         shift2 = np.round(-shift/2,2)  
+                         dst_file = os.path.join(parent_dir, dir,"2patch.txt")
+                         with open(dst_file, "w") as sources:
+                            for line in lines:
+                                 sources.write(re.sub("s2", "{}".format(shift2), line))
 '''                                               
 mkdir $dir
 cp in.mag2patch-quasi-2d $dir
