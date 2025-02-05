@@ -52,19 +52,21 @@ def inverted_renormalize_lbda(lbda,s):
 if __name__ == "__main__":
     
     # define lambda 
-    #Lbdas = np.array([1,1.5,2,2.3,2.5,3,3.5,4,4.5,5,6,7,8,9,10,15,20,25,30,35,40,50,60,70,80,90,100,120, 150,170,200,400])
-    Lbdas = np.array([1,1.5,2,2.3,2.5])
-    Nruns = np.arange(1,3)
-    #Shifts = np.linspace(0,0.8,33)
-    Shifts = np.linspace(0,0.4,5)
+    Lbdas = np.array([1,1.5,2,2.3,2.5,3,3.5,4,4.5,5,6,7,8,9,10,15,20,25,30,35,40,50,60,70,80,90,100,120, 150,170,200,400])
+    Nruns = np.arange(1,8)
+    Shifts = np.array([0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.375,0.4,0.425,0.45,0.475,0.5,0.525,0.55,0.575,0.6,0.65,0.7])
+
+    timestep_eq = 0.005 
+    timestep = 0.005
 
     for irun in Nruns:
            for shift in Shifts:
                   for lbda in Lbdas:
-                         
-                         # 1. make new directory 
+                         if shift >= 0.7:
+                             timestep = 0.001
+                        
                          parent_dir = os.getcwd()
-                         shift_str = np.round(shift,2)
+                         shift_str = np.round(shift,4)
                          dir = "mag2p_shift_{}_lambda_{}_phi2d_0.0106_rid_{}".format(shift_str,lbda,irun)
                          path = os.path.join(parent_dir, dir)
                          print(path)
@@ -95,12 +97,30 @@ if __name__ == "__main__":
                             for line in lines:
                                  sources.write(re.sub("Temperature", "{}".format(temp), line))
 
+            
+                        # 4. change time steps for equilibration and assembly 
+                         src_file = os.path.join(parent_dir, dir, "runlammps.sh")
+                         with open(src_file, "r") as sources:
+                              lines = sources.readlines()
+                        
+                         with open(src_file, "w") as sources:
+                            for line in lines:
+                                 sources.write(re.sub("timestep_eq", "{}".format(timestep_eq), line))
+
+                         src_file = os.path.join(parent_dir, dir, "runlammps.sh")
+                         with open(src_file, "r") as sources:
+                              lines = sources.readlines()
+                        
+                         with open(src_file, "w") as sources:
+                            for line in lines:
+                                 sources.write(re.sub("timestep", "{}".format(timestep), line))
+                        
                         # 4. set shift in lammps molecule input file 
                          src_file = os.path.join(parent_dir, dir,"2patch.txt")
                          with open(src_file, "r") as sources:
                               lines = sources.readlines()
                         
-                         shift1 = np.round(shift/2,2)   
+                         shift1 = np.round(shift/2,4)   
                          dst_file = os.path.join(parent_dir, dir,"2patch.txt")
                          with open(dst_file, "w") as sources:
                             for line in lines:
@@ -110,22 +130,8 @@ if __name__ == "__main__":
                          with open(src_file, "r") as sources:
                               lines = sources.readlines()
 
-                         shift2 = np.round(-shift/2,2)  
+                         shift2 = np.round(-shift/2,4)  
                          dst_file = os.path.join(parent_dir, dir,"2patch.txt")
                          with open(dst_file, "w") as sources:
                             for line in lines:
                                  sources.write(re.sub("s2", "{}".format(shift2), line))
-'''                                               
-mkdir $dir
-cp in.mag2patch-quasi-2d $dir
-cp 2patch.txt $dir
-mu_squared=0.01
-temp=$(echo "scale=9; $mu_squared/$li" | bc)
-cp runlammps.sh $dir
-sed -i "s/Temperature/$temp/" $dir/runlammps.sh
-cp 2patch.txt $dir
-s1=$(echo "scale=2; $shift/2" | bc)
-s2=$(echo "scale=2; -$shift/2" | bc)
-sed -i "s/s1/$s1/" $dir/2patch.txt
-sed -i "s/s2/$s2/" $dir/2patch.txt
-'''
