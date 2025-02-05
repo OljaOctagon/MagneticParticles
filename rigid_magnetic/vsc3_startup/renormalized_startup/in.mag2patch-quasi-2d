@@ -1,0 +1,64 @@
+dimension 3
+boundary p p f
+units lj
+atom_style hybrid molecular sphere dipole
+region simbox block 0 270 0 270 0 3  
+region pbox block 0 270 0 270 1.45 1.55
+create_box 2 simbox
+
+molecule dimer 2patch.txt
+create_atoms 0 random 1000 ${seed1} pbox mol dimer ${seed2}  overlap 1.0
+
+neighbor 1.0 bin
+neigh_modify check yes delay 0 every 1 
+neigh_modify exclude molecule/intra all
+
+mass 1 1.0
+mass 2 0.1 
+
+set type 1 mass 1 
+set type 2 mass 0.1 
+
+set type 1 density 1 
+set type 2 density 1 
+
+pair_style lj/cut/dipole/cut 1.122462048309373 10
+pair_coeff 1 1  1 1   1.122462048309373 10
+pair_coeff 1 2  1 0.05 0.5612310241546865 10
+pair_coeff 2 2  1 0.05 0.5612310241546865 10
+pair_modify shift yes
+
+#  normal time step run 
+restart 1000000 mag2patch.restart
+velocity       all create 1.0 ${seed3} dist gaussian rot yes
+
+fix floorC all  wall/lj126 zlo EDGE 1.0 1.0 1.122462048309373 
+fix ceiling all wall/lj126 zhi EDGE 1.0 1.0 1.122462048309373
+
+
+# equilibration run 
+fix 1  all rigid/nve molecule langevin 1 1 0.3 ${seed4}
+timestep ${tstep_eq} 
+compute T2 all temp/sphere
+thermo_modify temp T2
+thermo 10000
+variable mypot equal epair 
+fix EQ_energy_output all ave/time 1 1 100000 v_mypot file EQ_poteng.dat
+dump eqdump all atom 10000 eq.gz
+dump_modify eqdump sort id pbc yes 
+run 200000
+
+# Assembly run
+unfix 1  
+fix 1 all rigid/nve molecule langevin ${temp} ${temp} 0.3 ${seed5}
+timestep ${tstep} 
+compute T3 all temp/sphere
+thermo_modify temp T3
+thermo 10000
+variable mypot equal epair 
+fix energy_output all ave/time 1 1 500000 v_mypot file poteng.dat
+dump trjdump  all atom 500000 traj.gz
+dump_modify trjdump sort id    pbc yes
+dump mdipole all custom 500000 mu.gz id mol type x y z mux muy muz 
+dump_modify  mdipole   sort id    pbc yes
+run 1000000000
