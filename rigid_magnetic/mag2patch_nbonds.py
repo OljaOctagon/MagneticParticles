@@ -119,10 +119,3 @@ df.to_pickle(
     )
 
 
-#domains = list(nx.connected_components(G))
-#N_domains = len(domains)
-#av_domain_size = 
-
-
-
-
