@@ -82,18 +82,28 @@ for file in files:
     print(file)
     frames = read_lammpstrj(file)
     neighbour_list = calculate_neighbours(frames[-1])
+    Nparticles=1000
+
     G = nx.Graph() 
     G.add_edges_from(neighbour_list)
+
     degree = np.array([tuple[1] for tuple in G.degree()])
     number_of_bonded_particles = G.number_of_nodes()
-    Nparticles=1000 
     number_of_unbonded_particles = Nparticles - number_of_bonded_particles
-    print("unbonded", number_of_unbonded_particles)
     full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
     mean_degree = np.mean(full_degree)
     std_degree = np.std(full_degree)
-    print("degree", mean_degree, std_degree)
+   
+    clusters = nx.connected_components(G)
+    # average/std cluster size 
+    cluster_sizes = np.array([ len(c) for c in clusters ])
+    mean_cluster_size = np.mean(cluster_sizes)
+    std_cluster_szie = np.std(cluster_sizes)
+    # largest cluster size 
+    largest_cc = max(clusters, key=len) 
     
+
+
     new_results = {}
     new_results["file_id"] = file.split("/")[0]
     new_results["lambda"] = float(file.split("_")[4])
