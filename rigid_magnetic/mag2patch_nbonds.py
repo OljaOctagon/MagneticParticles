@@ -5,6 +5,9 @@ import glob
 import gzip 
 import pandas as pd 
 from datetime import datetime
+import numba 
+import cProfile
+from scipy.spatial.distance import squareform
 
 def read_lammpstrj(t):
     Nskip = 9
@@ -42,18 +45,49 @@ def read_lammpstrj(t):
     frames = np.array(frames)
     return frames 
 
-# TODO make c++ routine out of this 
-def calculate_neighbours(frame_i):
+@numba.njit(fastmath=True, parallel=False)
+def numba_distances(frame_i):
+    lx_box = 270 
+    ly_box = 270
+    lz_box = 3
+    N_particles = 1000
+
+    dist_norm = []    
+    for i, ipos in enumerate(frame_i):
+        for j, jpos in enumerate(frame_i):
+            if j>i: 
+                dist = ipos - jpos
+                
+                dx = dist[0]
+                dy = dist[1]
+                dz = dist[2]
+                
+                sign_dx = np.sign(dx)
+                sign_dy = np.sign(dy)
+                sign_dy = np.sign(dz)
+                
+                # pbc only for x and y 
+                dx = sign_dx*(min(np.fabs(dx),lx_box-np.fabs(dx)))
+                dy = sign_dy*(min(np.fabs(dy),ly_box-np.fabs(dy)))
+                
+                dist_ij = np.sqrt(np.power(dx*dx+dy*dy+dz*dz,2))
+                dist_norm.append(dist_ij)
+                
+    return dist_norm
+    
+
+def calculate_neighbours(frame_i,cutoff):
 
     lx_box = 270 
     ly_box = 270
     lz_box = 3
 
-    cutoff = 1.3
     neighbour_list = []
+
     for i, ipos in enumerate(frame_i):
         for j, jpos in enumerate(frame_i):
-            if i<j: 
+            if i<j:
+                
                 dist = ipos - jpos
                 dx = dist[0]
                 dy = dist[1]
@@ -78,12 +112,23 @@ def calculate_neighbours(frame_i):
 
 files = glob.glob("mag2p_shift*/traj.gz")
 df = pd.DataFrame()
+cutoff=1.3
+
+def calculate_neighbours_fast(sq_dist, cutoff):
+    b = np.where((sq_dist<cutoff) & (sq_dist>0.01))
+    neighbour_list = [[b[0][i],b[1][i]] for i in range(len(b[0]))]
+    return neighbour_list
+
+
 for file in files:
     print(file)
+    Nparticles = 1000 
     frames = read_lammpstrj(file)
-    neighbour_list = calculate_neighbours(frames[-1])
-    Nparticles=1000
 
+    dist = numba_distances(frames[-1])
+    dist_squareform = squareform(dist)
+    neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+    
     G = nx.Graph() 
     G.add_edges_from(neighbour_list)
 
@@ -94,16 +139,16 @@ for file in files:
     mean_degree = np.mean(full_degree)
     std_degree = np.std(full_degree)
    
-    clusters = nx.connected_components(G)
+    clusters = list(nx.connected_components(G))
     # average/std cluster size 
     cluster_sizes = np.array([ len(c) for c in clusters ])
     mean_cluster_size = np.mean(cluster_sizes)
     std_cluster_szie = np.std(cluster_sizes)
     # largest cluster size 
-    largest_cc = max(clusters, key=len) 
+    largest_cc = 0 
+    if clusters:
+        largest_cc = max(clusters, key=len) 
     
-
-
     new_results = {}
     new_results["file_id"] = file.split("/")[0]
     new_results["lambda"] = float(file.split("_")[4])
@@ -127,5 +172,4 @@ df.to_pickle(
             currentDateAndTime.second,
         )
     )
-
 
