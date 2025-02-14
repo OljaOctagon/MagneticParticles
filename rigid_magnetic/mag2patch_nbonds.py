@@ -119,6 +119,26 @@ def calculate_neighbours_fast(sq_dist, cutoff):
     neighbour_list = [[b[0][i],b[1][i]] for i in range(len(b[0]))]
     return neighbour_list
 
+# TODO rewrite in jit
+def radius_of_gyration(sq_dist,clusters):
+        Rg = []
+        for cluster in clusters:
+            rg=0
+            N_cluster = len(cluster) 
+            cluster_sorted = sorted(cluster)
+            for ic in cluster_sorted:
+                for jc in cluster:
+                    if ic<jc: 
+                        rg+=sq_dist[ic,jc] 
+
+            Rg.append((1/(2*N_cluster*N_cluster))*rg) 
+            
+        mean_Rg = np.mean(np.array(Rg))
+        std_Rg = np.std(np.array(Rg))
+
+        return  mean_Rg, std_Rg 
+    
+
 
 for file in files:
     print(file)
@@ -139,22 +159,31 @@ for file in files:
     mean_degree = np.mean(full_degree)
     std_degree = np.std(full_degree)
    
-    clusters = list(nx.connected_components(G))
+    clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
     # average/std cluster size 
     cluster_sizes = np.array([ len(c) for c in clusters ])
     mean_cluster_size = np.mean(cluster_sizes)
-    std_cluster_szie = np.std(cluster_sizes)
+    std_cluster_size = np.std(cluster_sizes)
     # largest cluster size 
     largest_cc = 0 
     if clusters:
-        largest_cc = max(clusters, key=len) 
+        largest_cc = np.max(cluster_sizes)
     
+    # radius of gyration     
+    mean_Rg, std_Rg = radius_of_gyration(dist,clusters)
+    print("Radius of gyration", mean_Rg, std_Rg)
     new_results = {}
     new_results["file_id"] = file.split("/")[0]
     new_results["lambda"] = float(file.split("_")[4])
     new_results["shift"] = float(file.split("_")[2])
     new_results["mean_bonds"] = mean_degree
     new_results["std_bonds"] = std_degree 
+    new_results["mean_size"] = mean_cluster_size
+    new_results["std_size"] = std_cluster_size
+    new_results["largest"] = largest_cc 
+    new_results["mean_radius_of_gyration"] = mean_Rg
+    new_results["std_radius_of_gyration"] = std_Rg 
+
 
     new_results = pd.DataFrame.from_dict(new_results, orient="index").T
 
