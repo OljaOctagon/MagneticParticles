@@ -112,6 +112,7 @@ def calculate_neighbours(frame_i,cutoff):
 
 files = glob.glob("mag2p_shift*/traj.gz")
 df = pd.DataFrame()
+Rg_df = pd.DataFrame()
 cutoff=1.3
 
 def calculate_neighbours_fast(sq_dist, cutoff):
@@ -121,22 +122,27 @@ def calculate_neighbours_fast(sq_dist, cutoff):
 
 # TODO rewrite in jit
 def radius_of_gyration(sq_dist,clusters):
-        Rg = []
+
+        Rg_result_dict = dict(zip(np.arange(31), np.zeros(31)))
+        Rg=[] 
         for cluster in clusters:
-            rg=0
+            rg=0 
             N_cluster = len(cluster) 
             cluster_sorted = sorted(cluster)
-            for ic in cluster_sorted:
-                for jc in cluster:
-                    if ic<jc: 
-                        rg+=sq_dist[ic,jc] 
+            if(N_cluster<31):
+                for ic in cluster_sorted:
+                    for jc in cluster:
+                        if ic<jc: 
+                            rg+=sq_dist[ic,jc]
 
-            Rg.append((1/(2*N_cluster*N_cluster))*rg) 
+                rg = (1/(2*N_cluster*N_cluster))*rg
+                Rg_result_dict[N_cluster] = rg 
+                Rg.append(rg)
             
         mean_Rg = np.mean(np.array(Rg))
         std_Rg = np.std(np.array(Rg))
 
-        return  mean_Rg, std_Rg 
+        return  Rg_result_dict, mean_Rg, std_Rg 
     
 
 
@@ -170,7 +176,8 @@ for file in files:
         largest_cc = np.max(cluster_sizes)
     
     # radius of gyration     
-    mean_Rg, std_Rg = radius_of_gyration(dist,clusters)
+    Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
+
     print("Radius of gyration", mean_Rg, std_Rg)
     new_results = {}
     new_results["file_id"] = file.split("/")[0]
@@ -184,15 +191,30 @@ for file in files:
     new_results["mean_radius_of_gyration"] = mean_Rg
     new_results["std_radius_of_gyration"] = std_Rg 
 
-
     new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-
     df = pd.concat([df, new_results], ignore_index=True)
+
+    Rg_result_dict["file_id"] = file.split("/")[0]
+    Rg_result_dict["lambda"] = float(file.split("_")[4])
+    Rg_result_dict["shift"] = float(file.split("_")[2])
+    Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
+    Rg_df = pd.concat([Rg_df,Rg_results])
 
 
 currentDateAndTime = datetime.now()
 df.to_pickle(
         "MAG2P_nbonded-{}-{}-{}-{}:{}:{}.pickle".format(
+            currentDateAndTime.year,
+            currentDateAndTime.month,
+            currentDateAndTime.day,
+            currentDateAndTime.hour,
+            currentDateAndTime.minute,
+            currentDateAndTime.second,
+        )
+    )
+
+Rg_df.to_pickle(
+        "MAG2P_radius_of_gyration-{}-{}-{}-{}:{}:{}.pickle".format(
             currentDateAndTime.year,
             currentDateAndTime.month,
             currentDateAndTime.day,
