@@ -8,6 +8,7 @@ from datetime import datetime
 import numba 
 import cProfile
 from scipy.spatial.distance import squareform
+from pathlib import Path
 
 def read_lammpstrj(t):
     Nskip = 9
@@ -19,28 +20,78 @@ def read_lammpstrj(t):
 
     frames = []
     frame_nr_old = -1 
-    with gzip.open(t, "r") as traj_file:
-        try: 
-            for i,line in enumerate(traj_file):
-                modulo = i % (Nskip+Natoms)
-                frame_nr = i // (Nskip+Natoms)
-                if frame_nr != frame_nr_old:
-                    frames.append([])
+    mfile = Path(t)
+    if mfile.is_file():
+        with gzip.open(t, "r") as traj_file:
+            try: 
+                for i,line in enumerate(traj_file):
+                    modulo = i % (Nskip+Natoms)
+                    frame_nr = i // (Nskip+Natoms)
+                    if frame_nr != frame_nr_old:
+                        frames.append([])
 
-                if modulo >=Nskip:
-                    whole_line = np.array(line.split()).astype(float)
-                    if whole_line[1] == 1:
-                        x = whole_line[2]*lx_box
-                        y = whole_line[3]*ly_box
-                        z = whole_line[4]*lz_box 
-                        frames[-1].append(np.array([x,y,z])) 
+                    if modulo >=Nskip:
+                        whole_line = np.array(line.split()).astype(float)
+                        if whole_line[1] == 1:
+                            x = whole_line[2]*lx_box
+                            y = whole_line[3]*ly_box
+                            z = whole_line[4]*lz_box 
+                            frames[-1].append(np.array([x,y,z])) 
 
-                frame_nr_old = frame_nr
-        except EOFError as er:
-            print(er)
+                    frame_nr_old = frame_nr
+            except EOFError as er:
+                print(er)
+        
+        if frames:
+            if len(frames[-1])!=Nparticles:
+                del frames[-1]
+
+    frames = np.array(frames)
+    return frames 
+
+
+def read_moments(mu):
+    Nskip = 9
+    Natoms=3000 
+    Nparticles = Natoms/3 
     
-    if len(frames[-1])!=Nparticles:
-        del frames[-1]
+    frames = []
+    frame_nr_old = -1 
+    mfile = Path(mu)
+    if mfile.is_file():
+        with gzip.open(mu, "r") as traj_file:
+            try: 
+                is_first=True 
+                eval=True
+                for i,line in enumerate(traj_file):
+
+                    if is_first == True:
+                         eval = True 
+
+                    modulo = i % (Nskip+Natoms)
+                    frame_nr = i // (Nskip+Natoms)
+                    if frame_nr != frame_nr_old:
+                        frames.append([])
+
+                    if modulo >=Nskip:
+                        whole_line = np.array(line.split()).astype(float)
+                        is_first = True 
+                        if whole_line[2] == 2 and eval==True:
+                            mx = whole_line[6]
+                            my = whole_line[7]
+                            mz = whole_line[8] 
+                            frames[-1].append(np.array([mx,my,mz])) 
+                            is_first = False 
+                            eval=False 
+                        
+
+                    frame_nr_old = frame_nr
+            except EOFError as er:
+                print(er)
+        
+        if frames:
+            if len(frames[-1])!=Nparticles:
+                del frames[-1]
 
     frames = np.array(frames)
     return frames 
@@ -111,6 +162,8 @@ def calculate_neighbours(frame_i,cutoff):
 
 
 files = glob.glob("mag2p_shift*/traj.gz")
+mfiles = glob.glob("mag2p_shift*/mu.gz")
+#files = ["mag2p_shift_0.55_lambda_1.25_phi2d_0.0106_rid_4/traj.gz"]
 df = pd.DataFrame()
 Rg_df = pd.DataFrame()
 cutoff=1.3
@@ -144,61 +197,77 @@ def radius_of_gyration(sq_dist,clusters):
 
         return  Rg_result_dict, mean_Rg, std_Rg 
     
+def mu_orientation_distribution(neighbour_list,moment_orientation):
+
+    #TODO: finish this function     
+    for i,j in neighbour_list:
+        m1 = moment_orientation[i]
+        m2 = moment_orientation[j]
+        scalar_product = np.dot(m1,m2)/(np.linalg.norm(m1)*np.linalg.norm(m2))
+        theta = np.arccos(scalar_product)
+
+    return hist_moments
 
 
-for file in files:
+for file, mfile  in zip(files,mfiles):
     print(file)
     Nparticles = 1000 
     frames = read_lammpstrj(file)
+    frames_mu = read_moments(mfile)
 
-    dist = numba_distances(frames[-1])
-    dist_squareform = squareform(dist)
-    neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+    if frames.size>0 and frames_mu.size >0:  
+
+        dist = numba_distances(frames[-1])
+        dist_squareform = squareform(dist)
+        neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+        
+        G = nx.Graph() 
+        G.add_edges_from(neighbour_list)
+
+        degree = np.array([tuple[1] for tuple in G.degree()])
+        number_of_bonded_particles = G.number_of_nodes()
+        number_of_unbonded_particles = Nparticles - number_of_bonded_particles
+        full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
+        mean_degree = np.mean(full_degree)
+        std_degree = np.std(full_degree)
     
-    G = nx.Graph() 
-    G.add_edges_from(neighbour_list)
+        clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
+        # average/std cluster size 
+        cluster_sizes = np.array([ len(c) for c in clusters ])
+        mean_cluster_size = np.mean(cluster_sizes)
+        std_cluster_size = np.std(cluster_sizes)
+        # largest cluster size 
+        largest_cc = 0 
+        if clusters:
+            largest_cc = np.max(cluster_sizes)
+        
+        # radius of gyration     
+        Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
 
-    degree = np.array([tuple[1] for tuple in G.degree()])
-    number_of_bonded_particles = G.number_of_nodes()
-    number_of_unbonded_particles = Nparticles - number_of_bonded_particles
-    full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
-    mean_degree = np.mean(full_degree)
-    std_degree = np.std(full_degree)
-   
-    clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
-    # average/std cluster size 
-    cluster_sizes = np.array([ len(c) for c in clusters ])
-    mean_cluster_size = np.mean(cluster_sizes)
-    std_cluster_size = np.std(cluster_sizes)
-    # largest cluster size 
-    largest_cc = 0 
-    if clusters:
-        largest_cc = np.max(cluster_sizes)
-    
-    # radius of gyration     
-    Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
+        hist_moments = mu_orientation_distribution(neighbour_list, frames_mu[-1])
+        
 
-    print("Radius of gyration", mean_Rg, std_Rg)
-    new_results = {}
-    new_results["file_id"] = file.split("/")[0]
-    new_results["lambda"] = float(file.split("_")[4])
-    new_results["shift"] = float(file.split("_")[2])
-    new_results["mean_bonds"] = mean_degree
-    new_results["std_bonds"] = std_degree 
-    new_results["mean_size"] = mean_cluster_size
-    new_results["std_size"] = std_cluster_size
-    new_results["largest"] = largest_cc 
-    new_results["mean_radius_of_gyration"] = mean_Rg
-    new_results["std_radius_of_gyration"] = std_Rg 
+        print("Radius of gyration", mean_Rg, std_Rg)
+        new_results = {}
+        new_results["file_id"] = file.split("/")[0]
+        new_results["lambda"] = float(file.split("_")[4])
+        new_results["shift"] = float(file.split("_")[2])
+        new_results["mean_bonds"] = mean_degree
+        new_results["std_bonds"] = std_degree 
+        new_results["mean_size"] = mean_cluster_size
+        new_results["std_size"] = std_cluster_size
+        new_results["largest"] = largest_cc 
+        new_results["mean_radius_of_gyration"] = mean_Rg
+        new_results["std_radius_of_gyration"] = std_Rg 
 
-    new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-    df = pd.concat([df, new_results], ignore_index=True)
+        new_results = pd.DataFrame.from_dict(new_results, orient="index").T
+        df = pd.concat([df, new_results], ignore_index=True)
 
-    Rg_result_dict["file_id"] = file.split("/")[0]
-    Rg_result_dict["lambda"] = float(file.split("_")[4])
-    Rg_result_dict["shift"] = float(file.split("_")[2])
-    Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
-    Rg_df = pd.concat([Rg_df,Rg_results])
+        Rg_result_dict["file_id"] = file.split("/")[0]
+        Rg_result_dict["lambda"] = float(file.split("_")[4])
+        Rg_result_dict["shift"] = float(file.split("_")[2])
+        Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
+        Rg_df = pd.concat([Rg_df,Rg_results])
 
 
 currentDateAndTime = datetime.now()
