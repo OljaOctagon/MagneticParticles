@@ -173,6 +173,12 @@ def calculate_neighbours_fast(sq_dist, cutoff):
     neighbour_list = [[b[0][i],b[1][i]] for i in range(len(b[0]))]
     return neighbour_list
 
+def calculate_second_neighbours_fast(sq_dist,cutoff_1,cutoff_2):
+    b = np.where((sq_dist>cutoff_1) & (sq_dist<cutoff_2))
+    neighbour_list = [[b[0][i],b[1][i]] for i in range(len(b[0]))]
+    return neighbour_list
+
+
 # TODO rewrite in jit
 def radius_of_gyration(sq_dist,clusters):
 
@@ -199,14 +205,16 @@ def radius_of_gyration(sq_dist,clusters):
     
 def mu_orientation_distribution(neighbour_list,moment_orientation):
 
-    #TODO: finish this function     
     for i,j in neighbour_list:
         m1 = moment_orientation[i]
         m2 = moment_orientation[j]
         scalar_product = np.dot(m1,m2)/(np.linalg.norm(m1)*np.linalg.norm(m2))
         theta = np.arccos(scalar_product)
 
-    return hist_moments
+    hist, bin_edges = np.hist(theta,bins=20, range=(0,2*np.pi), density=True)
+    moments_dict = dict(zip(bin_edges[:-1], hist))
+
+    return moments_dict
 
 
 for file, mfile  in zip(files,mfiles):
@@ -230,6 +238,15 @@ for file, mfile  in zip(files,mfiles):
         full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
         mean_degree = np.mean(full_degree)
         std_degree = np.std(full_degree)
+
+        cutoff_2 = 2.0 
+        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff,cutoff_2)
+        G2 = nx.Graph() 
+        G2.add_edges_from(second_neighbour_list)
+        degree2 = np.array([tuple[1] for tuple in G2.degree()])
+        number_of_second_neighbours = G2.number_of_nodes()
+        mean_degree2 = np.mean(degree2)
+        std_degree2 = np.std(degree2)
     
         clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
         # average/std cluster size 
@@ -244,7 +261,7 @@ for file, mfile  in zip(files,mfiles):
         # radius of gyration     
         Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
 
-        hist_moments = mu_orientation_distribution(neighbour_list, frames_mu[-1])
+        Moments_dict = mu_orientation_distribution(neighbour_list, frames_mu[-1])
         
 
         print("Radius of gyration", mean_Rg, std_Rg)
@@ -254,6 +271,8 @@ for file, mfile  in zip(files,mfiles):
         new_results["shift"] = float(file.split("_")[2])
         new_results["mean_bonds"] = mean_degree
         new_results["std_bonds"] = std_degree 
+        new_results["mean_second_neighbours"] = mean_degree2
+        new_results["std_second_neighbours"] = std_degree2 
         new_results["mean_size"] = mean_cluster_size
         new_results["std_size"] = std_cluster_size
         new_results["largest"] = largest_cc 
@@ -268,6 +287,13 @@ for file, mfile  in zip(files,mfiles):
         Rg_result_dict["shift"] = float(file.split("_")[2])
         Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
         Rg_df = pd.concat([Rg_df,Rg_results])
+
+        Moments_dict["file_id"] = file.split("/")[0]
+        Moments_dict["lambda"] = float(file.split("_")[4])
+        Moments_dict["shift"] = float(file.split("_")[2])
+        Moments_results = pd.DataFrame.from_dict(Moments_dict, orient="index").T
+        Moments_df = pd.concat([Moments_df,Moments_results])
+        
 
 
 currentDateAndTime = datetime.now()
@@ -293,3 +319,13 @@ Rg_df.to_pickle(
         )
     )
 
+Moments_df.to_pickle(
+        "MAG2P_moments-{}-{}-{}-{}:{}:{}.pickle".format(
+            currentDateAndTime.year,
+            currentDateAndTime.month,
+            currentDateAndTime.day,
+            currentDateAndTime.hour,
+            currentDateAndTime.minute,
+            currentDateAndTime.second,
+        )
+    )
