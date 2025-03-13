@@ -166,6 +166,7 @@ mfiles = glob.glob("mag2p_shift*/mu.gz")
 #files = ["mag2p_shift_0.55_lambda_1.25_phi2d_0.0106_rid_4/traj.gz"]
 df = pd.DataFrame()
 Rg_df = pd.DataFrame()
+Moments_df =pd.DataFrame()
 cutoff=1.3
 
 def calculate_neighbours_fast(sq_dist, cutoff):
@@ -204,14 +205,15 @@ def radius_of_gyration(sq_dist,clusters):
         return  Rg_result_dict, mean_Rg, std_Rg 
     
 def mu_orientation_distribution(neighbour_list,moment_orientation):
-
+    theta=[]
     for i,j in neighbour_list:
         m1 = moment_orientation[i]
         m2 = moment_orientation[j]
         scalar_product = np.dot(m1,m2)/(np.linalg.norm(m1)*np.linalg.norm(m2))
-        theta = np.arccos(scalar_product)
+        theta.append(np.arccos(scalar_product))
 
-    hist, bin_edges = np.hist(theta,bins=20, range=(0,2*np.pi), density=True)
+    theta=np.array(theta)
+    hist, bin_edges = np.histogram(theta,bins=50, range=(0,2*np.pi), density=True)
     moments_dict = dict(zip(bin_edges[:-1], hist))
 
     return moments_dict
