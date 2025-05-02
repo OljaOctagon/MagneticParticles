@@ -153,7 +153,7 @@ def calculate_neighbours(frame_i,cutoff):
                 dy = sign_dy*(min(np.fabs(dy),ly_box-np.fabs(dy)))
                 dz = dz 
 
-                dist_norm = np.sqrt(np.power(dx*dx+dy*dy+dz*dz,2))
+                dist_norm = np.sqrt(dx*dx+dy*dy+dz*dz)
                 if dist_norm < cutoff: 
                     neighbour_list.append([i,j])
 
