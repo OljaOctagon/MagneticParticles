@@ -275,6 +275,8 @@ def process_files(idir):
         new_results["std_radius_of_gyration"] = std_Rg 
         
         new_results = new_results | Moments_dict 
+        new_results = pd.DataFrame.from_dict(new_results, orient="index").T
+
 
         #new_results = pd.DataFrame.from_dict(new_results, orient="index").T
         
