@@ -22,8 +22,8 @@ def read_lammpstrj(t):
     frame_nr_old = -1 
     mfile = Path(t)
     if mfile.is_file():
-        with gzip.open(t, "r") as traj_file:
-            try: 
+        try:
+            with gzip.open(t, "r") as traj_file:
                 for i,line in enumerate(traj_file):
                     modulo = i % (Nskip+Natoms)
                     frame_nr = i // (Nskip+Natoms)
@@ -39,8 +39,8 @@ def read_lammpstrj(t):
                             frames[-1].append(np.array([x,y,z])) 
 
                     frame_nr_old = frame_nr
-            except EOFError as er:
-                print(er)
+        except EOFError as er:
+            print(er)
         
         if frames:
             if len(frames[-1])!=Nparticles:
@@ -59,8 +59,9 @@ def read_moments(mu):
     frame_nr_old = -1 
     mfile = Path(mu)
     if mfile.is_file():
-        with gzip.open(mu, "r") as traj_file:
-            try: 
+        try: 
+            with gzip.open(mu, "r") as traj_file:
+            
                 is_first=True 
                 eval=True
                 for i,line in enumerate(traj_file):
@@ -86,7 +87,8 @@ def read_moments(mu):
                         
 
                     frame_nr_old = frame_nr
-            except EOFError as er:
+
+        except EOFError as er:
                 print(er)
         
         if frames:
@@ -161,9 +163,13 @@ def calculate_neighbours(frame_i,cutoff):
     return neighbour_list 
 
 
-files = glob.glob("mag2p_shift*/traj.gz")
-mfiles = glob.glob("mag2p_shift*/mu.gz")
-#files = ["mag2p_shift_0.55_lambda_1.25_phi2d_0.0106_rid_4/traj.gz"]
+#files = glob.glob("mag2p_shift*/traj.gz")
+#mfiles = glob.glob("mag2p_shift*/mu.gz")
+
+files = ["mag2p_shift_0.15_lambda_1.8_phi2d_0.0106_rid_4/traj.gz"]
+mfiles = ["mag2p_shift_0.15_lambda_1.8_phi2d_0.0106_rid_4/mu.gz"]
+
+
 df = pd.DataFrame()
 Rg_df = pd.DataFrame()
 Moments_df =pd.DataFrame()
