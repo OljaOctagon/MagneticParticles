@@ -214,11 +214,11 @@ def mu_orientation_distribution(neighbour_list,moment_orientation):
     return moments_dict
 
 
-def process_files(pfile,mfile):
+def process_files(idir):
     Nparticles = 1000 
     cutoff = 1.3 
-    frames = read_lammpstrj(pfile)
-    frames_mu = read_moments(mfile)
+    frames = read_lammpstrj("{}traj.gz".format(idir))
+    frames_mu = read_moments("{}mu.gz".format(idir))
 
     if frames.size>0 and frames_mu.size >0:  
 
@@ -261,9 +261,9 @@ def process_files(pfile,mfile):
         Moments_dict = mu_orientation_distribution(neighbour_list, frames_mu[-1])
         
         new_results = {}
-        new_results["file_id"] = file.split("/")[0]
-        new_results["lambda"] = float(file.split("_")[4])
-        new_results["shift"] = float(file.split("_")[2])
+        new_results["file_id"] = idir
+        new_results["lambda"] = float(idir.split("_")[4])
+        new_results["shift"] = float(idir.split("_")[2])
         new_results["mean_bonds"] = mean_degree
         new_results["std_bonds"] = std_degree 
         new_results["mean_second_neighbours"] = mean_degree2
@@ -301,13 +301,10 @@ def process_files(pfile,mfile):
 if __name__ == "__main__":
 
     df = pd.DataFrame()
-    pfiles = glob.glob("mag2p_shift*/traj.gz")
-    mfiles = glob.glob("mag2p_shift*/mu.gz")
-    pfiles.sort()
-    mfiles.sort()
+    dirs = glob.glob("mag2p_shift*/")
    
     with multiprocessing.Pool(processes=8) as pool:
-        new_results = pool.map(process_files,pfiles, mfiles)
+        new_results = pool.map(process_files,dirs)
         pool.close()
         pool.join()
         df = pd.concat(new_results, ignore_index=True)
