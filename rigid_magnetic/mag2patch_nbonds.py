@@ -256,7 +256,7 @@ def process_files(idir):
             largest_cc = np.max(cluster_sizes)
         
         # radius of gyration     
-        #Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
+        Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
 
         Moments_dict = mu_orientation_distribution(neighbour_list, frames_mu[-1])
         
