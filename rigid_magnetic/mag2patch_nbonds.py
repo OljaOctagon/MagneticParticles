@@ -216,7 +216,7 @@ def mu_orientation_distribution(neighbour_list,moment_orientation):
 
 def process_files(idir):
     Nparticles = 1000 
-    cutoff = 1.3 
+    
     frames = read_lammpstrj("{}traj.gz".format(idir))
     frames_mu = read_moments("{}mu.gz".format(idir))
 
@@ -224,26 +224,40 @@ def process_files(idir):
 
         dist = numba_distances(frames[-1])
         dist_squareform = squareform(dist)
-        neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+
+        def calculate_degree(cutoff,dist_squareform):
+            neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+            G = nx.Graph()
+            G.add_edges_from(neighbour_list)
+
+            degree = np.array([tuple[1] for tuple in G.degree()])
+            number_of_bonded_particles = G.number_of_nodes()
+            number_of_unbonded_particles = Nparticles - number_of_bonded_particles
+            full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
+            mean_degree = np.mean(full_degree)
+            std_degree = np.std(full_degree)
+            
+            return mean_degree, std_degree, neighbour_list
         
-        G = nx.Graph() 
-        G.add_edges_from(neighbour_list)
+        # first neighbour cutoffs 
+        cutoff_1_2 = 1.2 
+        mean_degree_1_2, std_degree_1_2, _ = calculate_degree(cutoff_1_2,dist_squareform)
+        cutoff_1_3 = 1.3
+        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3 = calculate_degree(cutoff_1_3,dist_squareform)
+        cutoff_1_4 = 1.4 
+        mean_degree_1_4, std_degree_1_4, _ = calculate_degree(cutoff_1_4,dist_squareform)
+        cutoff_1_5 = 1.5 
+        mean_degree_1_5, std_degree_1_5, _ = calculate_degree(cutoff_1_5,dist_squareform)
 
-        degree = np.array([tuple[1] for tuple in G.degree()])
-        number_of_bonded_particles = G.number_of_nodes()
-        number_of_unbonded_particles = Nparticles - number_of_bonded_particles
-        full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
-        mean_degree = np.mean(full_degree)
-        std_degree = np.std(full_degree)
-
+        # second neighbour cutoff 
         cutoff_2 = 2.0 
-        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff,cutoff_2)
+        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff_1_3,cutoff_2)
         G2 = nx.Graph() 
         G2.add_edges_from(second_neighbour_list)
-        degree2 = np.array([tuple[1] for tuple in G2.degree()])
+        degree_2 = np.array([tuple[1] for tuple in G2.degree()])
         number_of_second_neighbours = G2.number_of_nodes()
-        mean_degree2 = np.mean(degree2)
-        std_degree2 = np.std(degree2)
+        mean_degree_2 = np.mean(degree_2)
+        std_degree_2 = np.std(degree_2)
 
         clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
         # average/std cluster size 
@@ -257,17 +271,25 @@ def process_files(idir):
         
         # radius of gyration     
         Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
-
-        Moments_dict = mu_orientation_distribution(neighbour_list, frames_mu[-1])
+        #Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
+        Moments_dict = mu_orientation_distribution(neighbour_list_1_3, frames_mu[-1])
         
         new_results = {}
         new_results["file_id"] = idir
         new_results["lambda"] = float(idir.split("_")[4])
         new_results["shift"] = float(idir.split("_")[2])
-        new_results["mean_bonds"] = mean_degree
-        new_results["std_bonds"] = std_degree 
-        new_results["mean_second_neighbours"] = mean_degree2
-        new_results["std_second_neighbours"] = std_degree2 
+
+        new_results["mean_bonds_1_2"] = mean_degree_1_2
+        new_results["std_bonds_1_2"] = std_degree_1_2
+        new_results["mean_bonds_1_3"] = mean_degree_1_3
+        new_results["std_bonds_1_3"] = std_degree_1_3
+        new_results["mean_bonds_1_4"] = mean_degree_1_4
+        new_results["std_bonds_1_4"] = std_degree_1_4
+        new_results["mean_bonds_1_5"] = mean_degree_1_5
+        new_results["std_bonds_1_5"] = std_degree_1_5
+
+        new_results["mean_second_neighbours"] = mean_degree_2
+        new_results["std_second_neighbours"] = std_degree_2 
         new_results["mean_size"] = mean_cluster_size
         new_results["std_size"] = std_cluster_size
         new_results["largest"] = largest_cc 
@@ -275,8 +297,8 @@ def process_files(idir):
         new_results["std_radius_of_gyration"] = std_Rg 
         
         new_results = new_results | Moments_dict 
+        new_results = new_results | Rg_result_dict 
         new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-
 
         #new_results = pd.DataFrame.from_dict(new_results, orient="index").T
         
@@ -285,15 +307,10 @@ def process_files(idir):
         #Rg_result_dict["file_id"] = file.split("/")[0]
         #Rg_result_dict["lambda"] = float(file.split("_")[4])
         #Rg_result_dict["shift"] = float(file.split("_")[2])
-        #Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
+       
         #Rg_df = pd.concat([Rg_df,Rg_results])
 
-        #Moments_dict["file_id"] = file.split("/")[0]
-        #Moments_dict["lambda"] = float(file.split("_")[4])
-        #Moments_dict["shift"] = float(file.split("_")[2])
-        #Moments_results = pd.DataFrame.from_dict(Moments_dict, orient="index").T
-        #Moments_df = pd.concat([Moments_df,Moments_results])
-            
+         
         return new_results 
     
     else: 
