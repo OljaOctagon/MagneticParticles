@@ -213,6 +213,19 @@ def mu_orientation_distribution(neighbour_list,moment_orientation):
 
     return moments_dict
 
+def calculate_degree(cutoff,dist_squareform):
+    neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
+    G = nx.Graph()
+    G.add_edges_from(neighbour_list)
+
+    degree = np.array([tuple[1] for tuple in G.degree()])
+    number_of_bonded_particles = G.number_of_nodes()
+    number_of_unbonded_particles = Nparticles - number_of_bonded_particles
+    full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
+    mean_degree = np.mean(full_degree)
+    std_degree = np.std(full_degree)
+    
+    return mean_degree, std_degree, neighbour_list, G
 
 def process_files(idir):
     Nparticles = 1000 
@@ -224,26 +237,12 @@ def process_files(idir):
 
         dist = numba_distances(frames[-1])
         dist_squareform = squareform(dist)
-
-        def calculate_degree(cutoff,dist_squareform):
-            neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
-            G = nx.Graph()
-            G.add_edges_from(neighbour_list)
-
-            degree = np.array([tuple[1] for tuple in G.degree()])
-            number_of_bonded_particles = G.number_of_nodes()
-            number_of_unbonded_particles = Nparticles - number_of_bonded_particles
-            full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
-            mean_degree = np.mean(full_degree)
-            std_degree = np.std(full_degree)
-            
-            return mean_degree, std_degree, neighbour_list
         
         # first neighbour cutoffs 
         cutoff_1_2 = 1.2 
         mean_degree_1_2, std_degree_1_2, _ = calculate_degree(cutoff_1_2,dist_squareform)
         cutoff_1_3 = 1.3
-        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3 = calculate_degree(cutoff_1_3,dist_squareform)
+        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3, G = calculate_degree(cutoff_1_3,dist_squareform)
         cutoff_1_4 = 1.4 
         mean_degree_1_4, std_degree_1_4, _ = calculate_degree(cutoff_1_4,dist_squareform)
         cutoff_1_5 = 1.5 
