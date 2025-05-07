@@ -40,9 +40,9 @@ def read_lammpstrj(t):
                             frames[-1].append(np.array([x,y,z])) 
 
                     frame_nr_old = frame_nr
-        except EOFError as er:
-            print(er)
-        
+        except (EOFError, IndexError, ValueError) as er:
+            print("Caught error in {}:".format(t), er) 
+       
         if frames:
             if len(frames[-1])!=Nparticles:
                 del frames[-1]
@@ -88,10 +88,10 @@ def read_moments(mu):
                         
 
                     frame_nr_old = frame_nr
+       
+        except (EOFError, IndexError, ValueError) as er:
+            print("Caught error in {}:".format(mu), er) 
 
-        except EOFError as er:
-                print(er)
-        
         if frames:
             if len(frames[-1])!=Nparticles:
                 del frames[-1]
@@ -213,7 +213,7 @@ def mu_orientation_distribution(neighbour_list,moment_orientation):
 
     return moments_dict
 
-def calculate_degree(cutoff,dist_squareform):
+def calculate_degree(cutoff,dist_squareform,Nparticles):
     neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
     G = nx.Graph()
     G.add_edges_from(neighbour_list)
@@ -240,13 +240,13 @@ def process_files(idir):
         
         # first neighbour cutoffs 
         cutoff_1_2 = 1.2 
-        mean_degree_1_2, std_degree_1_2, _ = calculate_degree(cutoff_1_2,dist_squareform)
+        mean_degree_1_2, std_degree_1_2, _,_ = calculate_degree(cutoff_1_2,dist_squareform,Nparticles)
         cutoff_1_3 = 1.3
-        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3, G = calculate_degree(cutoff_1_3,dist_squareform)
+        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3, G = calculate_degree(cutoff_1_3,dist_squareform, Nparticles)
         cutoff_1_4 = 1.4 
-        mean_degree_1_4, std_degree_1_4, _ = calculate_degree(cutoff_1_4,dist_squareform)
+        mean_degree_1_4, std_degree_1_4, _,_ = calculate_degree(cutoff_1_4,dist_squareform, Nparticles)
         cutoff_1_5 = 1.5 
-        mean_degree_1_5, std_degree_1_5, _ = calculate_degree(cutoff_1_5,dist_squareform)
+        mean_degree_1_5, std_degree_1_5, _,_ = calculate_degree(cutoff_1_5,dist_squareform, Nparticles)
 
         # second neighbour cutoff 
         cutoff_2 = 2.0 
@@ -313,7 +313,7 @@ def process_files(idir):
         return new_results 
     
     else: 
-        print("Problem with folder {}. Results not evaluated".format(pfile))
+        print("Problem with folder {}. Results not evaluated".format(idir))
 
 
 if __name__ == "__main__":
