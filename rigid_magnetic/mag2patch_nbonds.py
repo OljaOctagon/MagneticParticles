@@ -238,19 +238,15 @@ def process_files(idir):
         dist = numba_distances(frames[-1])
         dist_squareform = squareform(dist)
         
-        # first neighbour cutoffs 
-        cutoff_1_2 = 1.2 
-        mean_degree_1_2, std_degree_1_2, _,_ = calculate_degree(cutoff_1_2,dist_squareform,Nparticles)
-        cutoff_1_3 = 1.3
-        mean_degree_1_3, std_degree_1_3, neighbour_list_1_3, G = calculate_degree(cutoff_1_3,dist_squareform, Nparticles)
-        cutoff_1_4 = 1.4 
-        mean_degree_1_4, std_degree_1_4, _,_ = calculate_degree(cutoff_1_4,dist_squareform, Nparticles)
+        # first neighbour cutoffs
         cutoff_1_5 = 1.5 
-        mean_degree_1_5, std_degree_1_5, _,_ = calculate_degree(cutoff_1_5,dist_squareform, Nparticles)
+        mean_degree_1_5, std_degree_1_5, neighbour_list_1_5, G  = calculate_degree(cutoff_1_5,dist_squareform, Nparticles)
+        cutoff_1_8 = 1.8
+        mean_degree_1_8, std_degree_1_8, _,_ = calculate_degree(cutoff_1_8,dist_squareform, Nparticles)
 
         # second neighbour cutoff 
         cutoff_2 = 2.0 
-        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff_1_3,cutoff_2)
+        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff_1_5,cutoff_2)
         G2 = nx.Graph() 
         G2.add_edges_from(second_neighbour_list)
         degree_2 = np.array([tuple[1] for tuple in G2.degree()])
@@ -271,19 +267,16 @@ def process_files(idir):
         # radius of gyration     
         Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
         #Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
-        Moments_dict = mu_orientation_distribution(neighbour_list_1_3, frames_mu[-1])
+        Moments_dict = mu_orientation_distribution(neighbour_list_1_5, frames_mu[-1])
         
         new_results = {}
         new_results["file_id"] = idir
         new_results["lambda"] = float(idir.split("_")[4])
         new_results["shift"] = float(idir.split("_")[2])
 
-        new_results["mean_bonds_1_2"] = mean_degree_1_2
-        new_results["std_bonds_1_2"] = std_degree_1_2
-        new_results["mean_bonds_1_3"] = mean_degree_1_3
-        new_results["std_bonds_1_3"] = std_degree_1_3
-        new_results["mean_bonds_1_4"] = mean_degree_1_4
-        new_results["std_bonds_1_4"] = std_degree_1_4
+        
+        new_results["mean_bonds_1_8"] = mean_degree_1_8
+        new_results["std_bonds_1_8"] = std_degree_1_8
         new_results["mean_bonds_1_5"] = mean_degree_1_5
         new_results["std_bonds_1_5"] = std_degree_1_5
 
