@@ -5,7 +5,80 @@ import matplotlib.pyplot as plt
 import argparse 
 from matplotlib.patches import Wedge, Rectangle
 import multiprocessing
-from lammpstools.tools import read_mag2patch
+#from lammpstools.tools import read_mag2patch
+
+import numpy as np 
+import gzip 
+from pathlib import Path
+import numba 
+from scipy.spatial.distance import squareform
+
+def read_mag2patch(t):
+    Nskip = 9 
+    
+    Config = []
+    Box = []
+    frame_nr_old = -1 
+    mfile = Path(t)
+    Natoms = 0 
+    if mfile.is_file():
+        try: 
+            with open(t, "r") as traj_file:
+           
+                for i,line in enumerate(traj_file):
+                    modulo = i % (Nskip+Natoms)
+                    frame_nr = i // (Nskip+Natoms)
+                    if frame_nr != frame_nr_old:
+                        Config.append([])
+                        Box.append([])
+                        
+                    if modulo == 3:
+                        Natoms = np.array(line.split()).astype(float)[0]
+
+                    if modulo == 5:
+                        whole_line = np.array(line.split()).astype(float)
+                        Lstart = whole_line[0]
+                        Lend = whole_line[1]
+                        Lx = Lend - Lstart
+                        Box[-1].extend([Lx])
+                        
+                    if modulo == 6:
+                        whole_line = np.array(line.split()).astype(float)
+                        Lstart = whole_line[0]
+                        Lend = whole_line[1]
+                        Ly = Lend - Lstart
+                        Box[-1].extend([Ly])
+                        
+                    if modulo == 7:
+                        whole_line = np.array(line.split()).astype(float)
+                        Lstart = whole_line[0]
+                        Lend = whole_line[1]
+                        Lz = Lend - Lstart
+                        Box[-1].extend([Lz])
+                    
+
+                    if modulo >=Nskip:
+                        if whole_line[1] == 1:
+                            whole_line = np.array(line.split()).astype(float)
+                            x = whole_line[2]
+                            y = whole_line[3]
+                            z = whole_line[4] 
+
+                            Config[-1].append(np.array([x,y,z])) 
+
+                    frame_nr_old = frame_nr
+                    
+        except (EOFError, IndexError, ValueError) as er:
+            print("Caught error in {}:".format(t), er) 
+    
+        
+        if Config:
+            if len(Config[-1])!=Natoms:
+                del Config[-1]
+                del Box[-1]
+
+    Config = np.array(Config)
+    return Natoms, Config, Box 
 
 def process_files(filen):
 
@@ -39,69 +112,69 @@ def process_files(filen):
             ax.set_xlim([0, 1])
             ax.set_ylim([0, 1])
 
-                center = (center_i[0]/boxl,center_i[1]/boxl)    
-                c = plt.Circle(center,
-                            radius, 
-                            fc='#C80036',
-                            ec="k",
-                            linewidth=0.1)
-                
-        
-                ax.axis("off")
-                ax.add_patch(c)
-                
-                c1x, c1y, c2x,c2y = (0,0,0,0) 
-                d1x, d1y, d2x,d2y = (0,0,0,0) 
-                
-                if args.dipole == "lateral":
-                    c1x = center_i[0]/boxl + dist1[i,0]/boxl
-                    c1y = center_i[1]/boxl + dist1[i,1]/boxl
-                
-                    # rotate 90 degrees 
-                    d1x =  - dist1[i,1]/boxl
-                    d1y =    dist1[i,0]/boxl
-                
-                    c2x = center_i[0]/boxl + dist2[i,0]/boxl
-                    c2y = center_i[1]/boxl + dist2[i,1]/boxl
-                
-                    # rotate 90 degrees 
-                    d2x =    dist2[i,1]/boxl
-                    d2y =  - dist2[i,0]/boxl
-                    
-                if args.dipole == "radial":
-                    c1x = center_i[0]/boxl + dist1[i,0]/boxl
-                    c1y = center_i[1]/boxl + dist1[i,1]/boxl
-                
-                    d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
-                    d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
-                
-                    # rotate 180 degrees 
-                    c2x = center_i[0]/boxl + dist2[i,0]/boxl
-                    c2y = center_i[1]/boxl + dist2[i,1]/boxl
+            center = (center_i[0]/boxl,center_i[1]/boxl)    
+            c = plt.Circle(center,
+                        radius, 
+                        fc='#C80036',
+                        ec="k",
+                        linewidth=0.1)
             
-                    d2x =  d1x 
-                width=0.2*radius
-                ax.arrow(
-                        c1x, c1y, d1x, d1y,
-                        width = width,
-                        zorder = 10,
-                        head_width=width*3,
-                        head_length=width*3,
-                        linewidth = 0.1,
-                        fc = "#F8C794",
-                        ec="k")
+    
+            ax.axis("off")
+            ax.add_patch(c)
+            
+            c1x, c1y, c2x,c2y = (0,0,0,0) 
+            d1x, d1y, d2x,d2y = (0,0,0,0) 
+            
+            if args.dipole == "lateral":
+                c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                c1y = center_i[1]/boxl + dist1[i,1]/boxl
+            
+                # rotate 90 degrees 
+                d1x =  - dist1[i,1]/boxl
+                d1y =    dist1[i,0]/boxl
+            
+                c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                c2y = center_i[1]/boxl + dist2[i,1]/boxl
+            
+                # rotate 90 degrees 
+                d2x =    dist2[i,1]/boxl
+                d2y =  - dist2[i,0]/boxl
                 
-                ax.arrow(
-                        c2x,c2y,d2x,d2y,  
-                        width = width,
-                        zorder = 10,
-                        head_width=width*3,
-                        head_length=width*3,
-                        linewidth = 0.1,
-                        fc = '#F8C794',
-                        ec = "k"
-                        )
-                
+            if args.dipole == "radial":
+                c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                c1y = center_i[1]/boxl + dist1[i,1]/boxl
+            
+                d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
+                d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
+            
+                # rotate 180 degrees 
+                c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                c2y = center_i[1]/boxl + dist2[i,1]/boxl
+        
+                d2x =  d1x 
+            width=0.2*radius
+            ax.arrow(
+                    c1x, c1y, d1x, d1y,
+                    width = width,
+                    zorder = 10,
+                    head_width=width*3,
+                    head_length=width*3,
+                    linewidth = 0.1,
+                    fc = "#F8C794",
+                    ec="k")
+            
+            ax.arrow(
+                    c2x,c2y,d2x,d2y,  
+                    width = width,
+                    zorder = 10,
+                    head_width=width*3,
+                    head_length=width*3,
+                    linewidth = 0.1,
+                    fc = '#F8C794',
+                    ec = "k"
+                    )
+            
             plt.savefig("pngs/frame_{}.png".format(filen),dpi=300)
             plt.savefig("pdfs/frame_{}.pdf".format(filen))
             plt.close(fig)
@@ -117,7 +190,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     dirs = pd.read_csv(args.f).values.flatten().tolist()
-    print(dirsf
+   
     with multiprocessing.Pool(processes=8) as pool:
         pool.map(process_files,dirs)
         pool.close()
