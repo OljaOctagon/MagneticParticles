@@ -83,8 +83,7 @@ def read_mag2patch(t):
 def process_files(filen):
 
     ifile = "{}/traj.gz".format(filen)
-    print(ifile)
-    Natoms, frames, Box  = read_mag2patch(filen)
+    Natoms, frames, Box  = read_mag2patch(ifile)
     print(Natoms, frames, Box) 
     if frames.size > 0: 
         freq = 5
@@ -190,7 +189,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     dirs = pd.read_csv(args.f).values.flatten().tolist()
-   
+    
     with multiprocessing.Pool(processes=8) as pool:
         pool.map(process_files,dirs)
         pool.close()
