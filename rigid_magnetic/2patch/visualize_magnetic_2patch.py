@@ -57,7 +57,6 @@ def read_mag2patch(t):
                 
 
                     if modulo >=Nskip:
-                        if whole_line[1] == 1:
                             whole_line = np.array(line.split()).astype(float)
                             x = whole_line[2]
                             y = whole_line[3]
