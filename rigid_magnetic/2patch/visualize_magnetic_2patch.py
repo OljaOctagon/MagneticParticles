@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import argparse 
 from matplotlib.patches import Wedge, Rectangle
 import multiprocessing
-from lammpstools import read_mag2patch
+from lammpstools.tools import read_mag2patch
 
 def process_files(filen):
 
