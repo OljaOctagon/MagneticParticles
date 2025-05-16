@@ -9,10 +9,11 @@ from lammpstools.tools import read_mag2patch
 
 def process_files(filen):
 
-    ifile = filen+"/traj.gz"
+    ifile = "{}/traj.gz".format(filen)
+    print(ifile)
     Natoms, frames, Box  = read_mag2patch(filen)
-    
-    if frames: 
+    print(Natoms, frames, Box) 
+    if frames.size > 0: 
         freq = 5
         boxl=Box[0][0]
         radius=0.5/boxl
@@ -37,8 +38,6 @@ def process_files(filen):
 
             ax.set_xlim([0, 1])
             ax.set_ylim([0, 1])
-
-            for i, center_i in enumerate(core_particles):
 
                 center = (center_i[0]/boxl,center_i[1]/boxl)    
                 c = plt.Circle(center,
@@ -81,9 +80,6 @@ def process_files(filen):
                     c2y = center_i[1]/boxl + dist2[i,1]/boxl
             
                     d2x =  d1x 
-                    d2y =  d1y
-
-                
                 width=0.2*radius
                 ax.arrow(
                         c1x, c1y, d1x, d1y,
@@ -111,28 +107,6 @@ def process_files(filen):
             plt.close(fig)
 
 
-'''
-def read_file(filen):
-    particles = []
-    with open(filen, "r") as flmp:
-            collect_line =False
-            for line in flmp.readlines():
-                    
-                if line.startswith("ITEM: TIMESTEP"):
-                    collect_line=False 
-                
-                if collect_line == True:
-                    entry = np.array([float(x) for x in line.split()])
-                    particles[-1].append(entry)
-                    
-                if line.startswith("ITEM: ATOMS"):
-                    collect_line=True
-                    particles.append([])
-                    
-    return particles 
-'''
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -142,7 +116,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    dirs = pd.read_csv(args.f).values
+    dirs = pd.read_csv(args.f).values.flatten().tolist()
+    print(dirsf
     with multiprocessing.Pool(processes=8) as pool:
         pool.map(process_files,dirs)
         pool.close()
