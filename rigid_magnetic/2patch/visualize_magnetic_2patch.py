@@ -67,10 +67,10 @@ def read_mag2patch(t):
 
                     frame_nr_old = frame_nr
                     
-        except (EOFError, IndexError, ValueError) as er:
+        #except (EOFError, IndexError, ValueError) as er:
+        except EOFError as er:
             print("Caught error in {}:".format(t), er) 
     
-        
         if Config:
             if len(Config[-1])!=Natoms:
                 del Config[-1]
@@ -83,7 +83,7 @@ def process_files(filen):
 
     ifile = "{}/traj.gz".format(filen)
     Natoms, frames, Box  = read_mag2patch(ifile)
-    print("Frames", frames.size)
+    print("Frames", frames.size, Box[0], Natoms)
     if frames.size > 0: 
         freq = 5
         boxl=Box[0][0]
