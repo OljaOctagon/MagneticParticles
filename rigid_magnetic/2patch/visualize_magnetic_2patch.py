@@ -8,7 +8,7 @@ import multiprocessing
 from lammpstools import read_mag2patch
 
 def process_files(filen):
-    
+
     ifile = filen+"/traj.gz"
     Natoms, frames, Box  = read_mag2patch(filen)
     
@@ -135,25 +135,17 @@ def read_file(filen):
 
 if __name__ == "__main__":
 
-    dirs = pd.read_csv("dir_list.csv").values 
-    ifiles = dirs+"/traj.gz"
-    with multiprocessing.Pool(processes=8) as pool:
-        new_results = pool.map(process_files,ifiles)
-        pool.close()
-        pool.join()
-
-
-if __name__ == "__main__":
-    
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", 
                         type=str, 
-                        default="trajectory.lammpstrj")
-    parser.add_argument("-dipole",
-                        type=str, 
-                        default="lateral")
+                        default="dir_list.txt")
+    
     args = parser.parse_args()
 
+    dirs = pd.read_csv(args.f).values
+    with multiprocessing.Pool(processes=8) as pool:
+        new_results = pool.map(process_files,dirs)
+        pool.close()
+        pool.join()
 
-   
-  
+ 
