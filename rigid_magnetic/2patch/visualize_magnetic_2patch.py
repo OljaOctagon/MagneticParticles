@@ -15,7 +15,6 @@ from scipy.spatial.distance import squareform
 
 def read_mag2patch(t):
     Nskip = 9 
-    
     Config = []
     Box = []
     frame_nr_old = -1 
@@ -23,7 +22,7 @@ def read_mag2patch(t):
     Natoms = 0 
     if mfile.is_file():
         try: 
-            with open(t, "r") as traj_file:
+            with gzip.open(t, "r") as traj_file:    
            
                 for i,line in enumerate(traj_file):
                     modulo = i % (Nskip+Natoms)
