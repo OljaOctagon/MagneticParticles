@@ -19,7 +19,7 @@ def read_mag2patch(t):
     Box = []
     frame_nr_old = -1 
     mfile = Path(t)
-    Natoms = 0 
+    Natoms = 3000
     if mfile.is_file():
         try: 
             with gzip.open(t, "r") as traj_file:    
@@ -54,7 +54,7 @@ def read_mag2patch(t):
                         Lend = whole_line[1]
                         Lz = Lend - Lstart
                         Box[-1].extend([Lz])
-                    
+                
 
                     if modulo >=Nskip:
                         if whole_line[1] == 1:
