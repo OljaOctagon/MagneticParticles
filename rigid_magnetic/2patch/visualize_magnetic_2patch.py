@@ -109,21 +109,24 @@ def process_files(filen):
             ax.set_xlim([0, 1])
             ax.set_ylim([0, 1])
 
-            center = (center_i[0]/boxl,center_i[1]/boxl)    
-            c = plt.Circle(center,
-                        radius, 
-                        fc='#C80036',
-                        ec="k",
-                        linewidth=0.1)
-            
-    
-            ax.axis("off")
-            ax.add_patch(c)
-            
-            c1x, c1y, c2x,c2y = (0,0,0,0) 
-            d1x, d1y, d2x,d2y = (0,0,0,0) 
-            
-            if args.dipole == "lateral":
+            for i, center_i in enumerate(core_particles): 
+
+                center = (center_i[0]/boxl,center_i[1]/boxl)    
+                c = plt.Circle(center,
+                            radius, 
+                            fc='#C80036',
+                            ec="k",
+                            linewidth=0.1)
+                
+        
+                ax.axis("off")
+                ax.add_patch(c)
+                
+                c1x, c1y, c2x,c2y = (0,0,0,0) 
+                d1x, d1y, d2x,d2y = (0,0,0,0) 
+                
+                # automatically assume that dipoles are lateral 
+                
                 c1x = center_i[0]/boxl + dist1[i,0]/boxl
                 c1y = center_i[1]/boxl + dist1[i,1]/boxl
             
@@ -138,40 +141,29 @@ def process_files(filen):
                 d2x =    dist2[i,1]/boxl
                 d2y =  - dist2[i,0]/boxl
                 
-            if args.dipole == "radial":
-                c1x = center_i[0]/boxl + dist1[i,0]/boxl
-                c1y = center_i[1]/boxl + dist1[i,1]/boxl
-            
-                d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
-                d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
-            
-                # rotate 180 degrees 
-                c2x = center_i[0]/boxl + dist2[i,0]/boxl
-                c2y = center_i[1]/boxl + dist2[i,1]/boxl
-        
-                d2x =  d1x 
-            width=0.2*radius
-            ax.arrow(
-                    c1x, c1y, d1x, d1y,
-                    width = width,
-                    zorder = 10,
-                    head_width=width*3,
-                    head_length=width*3,
-                    linewidth = 0.1,
-                    fc = "#F8C794",
-                    ec="k")
-            
-            ax.arrow(
-                    c2x,c2y,d2x,d2y,  
-                    width = width,
-                    zorder = 10,
-                    head_width=width*3,
-                    head_length=width*3,
-                    linewidth = 0.1,
-                    fc = '#F8C794',
-                    ec = "k"
-                    )
-            
+                
+                width=0.2*radius
+                ax.arrow(
+                        c1x, c1y, d1x, d1y,
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        linewidth = 0.1,
+                        fc = "#F8C794",
+                        ec="k")
+                
+                ax.arrow(
+                        c2x,c2y,d2x,d2y,  
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        linewidth = 0.1,
+                        fc = '#F8C794',
+                        ec = "k"
+                        )
+                
             plt.savefig("pngs/frame_{}.png".format(filen),dpi=300)
             plt.savefig("pdfs/frame_{}.pdf".format(filen))
             plt.close(fig)
