@@ -91,9 +91,9 @@ def process_files(filen):
         for j in range(len(frames)-1, len(frames),freq):
             
             frame = np.array(frames[j])
-            core_particles = frame[::3,2:4]*boxl
-            patch1_particles = frame[1::3,2:4]*boxl
-            patch2_particles = frame[2::3,2:4]*boxl
+            core_particles = frame[::3,:2]*boxl
+            patch1_particles = frame[1::3,:2]*boxl
+            patch2_particles = frame[2::3,:2]*boxl
                 
             dist1 = patch1_particles-core_particles
             dist1 = dist1 - boxl*np.rint(dist1/boxl)
@@ -110,7 +110,6 @@ def process_files(filen):
             ax.set_ylim([0, 1])
 
             for i, center_i in enumerate(core_particles): 
-
                 center = (center_i[0]/boxl,center_i[1]/boxl)    
                 c = plt.Circle(center,
                             radius, 
