@@ -1,6 +1,6 @@
 import numpy as np 
+import pandas as pd 
 import seaborn as sns 
-import mdtraj as md 
 import matplotlib.pyplot as plt 
 import argparse 
 from matplotlib.patches import Wedge, Rectangle
@@ -135,9 +135,8 @@ def read_file(filen):
 
 if __name__ == "__main__":
 
-
-    dirs = []
-    ifiles = []
+    dirs = pd.read_csv("dir_list.csv").values 
+    ifiles = dirs+"/traj.gz"
     with multiprocessing.Pool(processes=8) as pool:
         new_results = pool.map(process_files,ifiles)
         pool.close()
