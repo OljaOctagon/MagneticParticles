@@ -83,7 +83,7 @@ def process_files(filen):
 
     ifile = "{}/traj.gz".format(filen)
     Natoms, frames, Box  = read_mag2patch(ifile)
-    print(Natoms, frames, Box) 
+    print("Frames", frames.size)
     if frames.size > 0: 
         freq = 5
         boxl=Box[0][0]
