@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
     frames = read_file(args.f)
     freq = 5
-    boxl = 40 
+    boxl = 270 
     radius=0.5/boxl
     
     for j in range(len(frames)-1, len(frames),freq):
@@ -68,7 +68,8 @@ if __name__ == "__main__":
             c = plt.Circle(center,
                            radius, 
                            fc='#C80036',
-                           ec="k",)
+                           ec="k",
+                           linewidth=0.1)
             
       
             ax.axis("off")
@@ -107,13 +108,14 @@ if __name__ == "__main__":
                 d2y =  d1y
 
             
-            width=0.0015
+            width=0.2*radius
             ax.arrow(
                     c1x, c1y, d1x, d1y,
                     width = width,
                     zorder = 10,
                     head_width=width*3,
                     head_length=width*3,
+                    linewidth = 0.1,
                     fc = "#F8C794",
                     ec="k")
             
@@ -123,6 +125,7 @@ if __name__ == "__main__":
                     zorder = 10,
                     head_width=width*3,
                     head_length=width*3,
+                    linewidth = 0.1,
                     fc = '#F8C794',
                     ec = "k"
                     )
