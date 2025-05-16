@@ -111,7 +111,7 @@ def process_files(filen):
             plt.close(fig)
 
 
-
+'''
 def read_file(filen):
     particles = []
     with open(filen, "r") as flmp:
@@ -130,7 +130,7 @@ def read_file(filen):
                     particles.append([])
                     
     return particles 
-
+'''
 
 
 if __name__ == "__main__":
@@ -144,7 +144,7 @@ if __name__ == "__main__":
 
     dirs = pd.read_csv(args.f).values
     with multiprocessing.Pool(processes=8) as pool:
-        new_results = pool.map(process_files,dirs)
+        pool.map(process_files,dirs)
         pool.close()
         pool.join()
 
