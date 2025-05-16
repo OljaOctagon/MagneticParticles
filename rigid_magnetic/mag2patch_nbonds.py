@@ -266,7 +266,6 @@ def process_files(idir):
         
         # radius of gyration     
         Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
-        #Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
         Moments_dict = mu_orientation_distribution(neighbour_list_1_5, frames_mu[-1])
         
         new_results = {}
@@ -291,17 +290,6 @@ def process_files(idir):
         new_results = new_results | Moments_dict 
         new_results = new_results | Rg_result_dict 
         new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-
-        #new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-        
-        #df = pd.concat([df, new_results], ignore_index=True)
-
-        #Rg_result_dict["file_id"] = file.split("/")[0]
-        #Rg_result_dict["lambda"] = float(file.split("_")[4])
-        #Rg_result_dict["shift"] = float(file.split("_")[2])
-       
-        #Rg_df = pd.concat([Rg_df,Rg_results])
-
          
         return new_results 
     
@@ -333,120 +321,3 @@ if __name__ == "__main__":
     )
 
                                                                                       
-
-############################## old 
-
-'''
-for file, mfile  in zip(files,mfiles):
-    print(file)
-    Nparticles = 1000 
-    frames = read_lammpstrj(file)
-    frames_mu = read_moments(mfile)
-
-    if frames.size>0 and frames_mu.size >0:  
-
-        dist = numba_distances(frames[-1])
-        dist_squareform = squareform(dist)
-        neighbour_list= calculate_neighbours_fast(dist_squareform,cutoff)
-        
-        G = nx.Graph() 
-        G.add_edges_from(neighbour_list)
-
-        degree = np.array([tuple[1] for tuple in G.degree()])
-        number_of_bonded_particles = G.number_of_nodes()
-        number_of_unbonded_particles = Nparticles - number_of_bonded_particles
-        full_degree = np.append(degree,np.zeros(number_of_unbonded_particles))   
-        mean_degree = np.mean(full_degree)
-        std_degree = np.std(full_degree)
-
-        cutoff_2 = 2.0 
-        second_neighbour_list = calculate_second_neighbours_fast(dist_squareform,cutoff,cutoff_2)
-        G2 = nx.Graph() 
-        G2.add_edges_from(second_neighbour_list)
-        degree2 = np.array([tuple[1] for tuple in G2.degree()])
-        number_of_second_neighbours = G2.number_of_nodes()
-        mean_degree2 = np.mean(degree2)
-        std_degree2 = np.std(degree2)
-    
-        clusters = [ list(cluster) for cluster in list(nx.connected_components(G))]
-        # average/std cluster size 
-        cluster_sizes = np.array([ len(c) for c in clusters ])
-        mean_cluster_size = np.mean(cluster_sizes)
-        std_cluster_size = np.std(cluster_sizes)
-        # largest cluster size 
-        largest_cc = 0 
-        if clusters:
-            largest_cc = np.max(cluster_sizes)
-        
-        # radius of gyration     
-        Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
-
-        Moments_dict = mu_orientation_distribution(neighbour_list, frames_mu[-1])
-        
-
-        print("Radius of gyration", mean_Rg, std_Rg)
-        new_results = {}
-        new_results["file_id"] = file.split("/")[0]
-        new_results["lambda"] = float(file.split("_")[4])
-        new_results["shift"] = float(file.split("_")[2])
-        new_results["mean_bonds"] = mean_degree
-        new_results["std_bonds"] = std_degree 
-        new_results["mean_second_neighbours"] = mean_degree2
-        new_results["std_second_neighbours"] = std_degree2 
-        new_results["mean_size"] = mean_cluster_size
-        new_results["std_size"] = std_cluster_size
-        new_results["largest"] = largest_cc 
-        new_results["mean_radius_of_gyration"] = mean_Rg
-        new_results["std_radius_of_gyration"] = std_Rg 
-
-        new_results = pd.DataFrame.from_dict(new_results, orient="index").T
-        df = pd.concat([df, new_results], ignore_index=True)
-
-        Rg_result_dict["file_id"] = file.split("/")[0]
-        Rg_result_dict["lambda"] = float(file.split("_")[4])
-        Rg_result_dict["shift"] = float(file.split("_")[2])
-        Rg_results = pd.DataFrame.from_dict(Rg_result_dict, orient="index").T
-        Rg_df = pd.concat([Rg_df,Rg_results])
-
-        Moments_dict["file_id"] = file.split("/")[0]
-        Moments_dict["lambda"] = float(file.split("_")[4])
-        Moments_dict["shift"] = float(file.split("_")[2])
-        Moments_results = pd.DataFrame.from_dict(Moments_dict, orient="index").T
-        Moments_df = pd.concat([Moments_df,Moments_results])
-        
-
-
-currentDateAndTime = datetime.now()
-df.to_pickle(
-        "MAG2P_nbonded-{}-{}-{}-{}:{}:{}.pickle".format(
-            currentDateAndTime.year,
-            currentDateAndTime.month,
-            currentDateAndTime.day,
-            currentDateAndTime.hour,
-            currentDateAndTime.minute,
-            currentDateAndTime.second,
-        )
-    )
-
-Rg_df.to_pickle(
-        "MAG2P_radius_of_gyration-{}-{}-{}-{}:{}:{}.pickle".format(
-            currentDateAndTime.year,
-            currentDateAndTime.month,
-            currentDateAndTime.day,
-            currentDateAndTime.hour,
-            currentDateAndTime.minute,
-            currentDateAndTime.second,
-        )
-    )
-
-Moments_df.to_pickle(
-        "MAG2P_moments-{}-{}-{}-{}:{}:{}.pickle".format(
-            currentDateAndTime.year,
-            currentDateAndTime.month,
-            currentDateAndTime.day,
-            currentDateAndTime.hour,
-            currentDateAndTime.minute,
-            currentDateAndTime.second,
-        )
-    )
-'''

@@ -4,6 +4,113 @@ import mdtraj as md
 import matplotlib.pyplot as plt 
 import argparse 
 from matplotlib.patches import Wedge, Rectangle
+import multiprocessing
+from lammpstools import read_mag2patch
+
+def process_files(filen):
+    
+    ifile = filen+"/traj.gz"
+    Natoms, frames, Box  = read_mag2patch(filen)
+    
+    if frames: 
+        freq = 5
+        boxl=Box[0][0]
+        radius=0.5/boxl
+        
+        for j in range(len(frames)-1, len(frames),freq):
+            
+            frame = np.array(frames[j])
+            core_particles = frame[::3,2:4]*boxl
+            patch1_particles = frame[1::3,2:4]*boxl
+            patch2_particles = frame[2::3,2:4]*boxl
+                
+            dist1 = patch1_particles-core_particles
+            dist1 = dist1 - boxl*np.rint(dist1/boxl)
+            dist1norm = np.linalg.norm(dist1,axis=1)
+            
+            dist2 = patch2_particles-core_particles
+            dist2 = dist2 - boxl*np.rint(dist2/boxl)
+            dist2norm = np.linalg.norm(dist2,axis=1)
+                
+            fig, ax = plt.subplots(figsize=(20,20))
+            ax.set_aspect('equal')
+
+            ax.set_xlim([0, 1])
+            ax.set_ylim([0, 1])
+
+            for i, center_i in enumerate(core_particles):
+
+                center = (center_i[0]/boxl,center_i[1]/boxl)    
+                c = plt.Circle(center,
+                            radius, 
+                            fc='#C80036',
+                            ec="k",
+                            linewidth=0.1)
+                
+        
+                ax.axis("off")
+                ax.add_patch(c)
+                
+                c1x, c1y, c2x,c2y = (0,0,0,0) 
+                d1x, d1y, d2x,d2y = (0,0,0,0) 
+                
+                if args.dipole == "lateral":
+                    c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                    c1y = center_i[1]/boxl + dist1[i,1]/boxl
+                
+                    # rotate 90 degrees 
+                    d1x =  - dist1[i,1]/boxl
+                    d1y =    dist1[i,0]/boxl
+                
+                    c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                    c2y = center_i[1]/boxl + dist2[i,1]/boxl
+                
+                    # rotate 90 degrees 
+                    d2x =    dist2[i,1]/boxl
+                    d2y =  - dist2[i,0]/boxl
+                    
+                if args.dipole == "radial":
+                    c1x = center_i[0]/boxl + dist1[i,0]/boxl
+                    c1y = center_i[1]/boxl + dist1[i,1]/boxl
+                
+                    d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
+                    d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
+                
+                    # rotate 180 degrees 
+                    c2x = center_i[0]/boxl + dist2[i,0]/boxl
+                    c2y = center_i[1]/boxl + dist2[i,1]/boxl
+            
+                    d2x =  d1x 
+                    d2y =  d1y
+
+                
+                width=0.2*radius
+                ax.arrow(
+                        c1x, c1y, d1x, d1y,
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        linewidth = 0.1,
+                        fc = "#F8C794",
+                        ec="k")
+                
+                ax.arrow(
+                        c2x,c2y,d2x,d2y,  
+                        width = width,
+                        zorder = 10,
+                        head_width=width*3,
+                        head_length=width*3,
+                        linewidth = 0.1,
+                        fc = '#F8C794',
+                        ec = "k"
+                        )
+                
+            plt.savefig("pngs/frame_{}.png".format(filen),dpi=300)
+            plt.savefig("pdfs/frame_{}.pdf".format(filen))
+            plt.close(fig)
+
+
 
 def read_file(filen):
     particles = []
@@ -25,6 +132,18 @@ def read_file(filen):
     return particles 
 
 
+
+if __name__ == "__main__":
+
+
+    dirs = []
+    ifiles = []
+    with multiprocessing.Pool(processes=8) as pool:
+        new_results = pool.map(process_files,ifiles)
+        pool.close()
+        pool.join()
+
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
@@ -36,102 +155,6 @@ if __name__ == "__main__":
                         default="lateral")
     args = parser.parse_args()
 
-    frames = read_file(args.f)
-    freq = 5
-    boxl = 270 
-    radius=0.5/boxl
-    
-    for j in range(len(frames)-1, len(frames),freq):
-        print(j)
-        frame = np.array(frames[j])
-        core_particles = frame[::3,2:4]*boxl
-        patch1_particles = frame[1::3,2:4]*boxl
-        patch2_particles = frame[2::3,2:4]*boxl
-            
-        dist1 = patch1_particles-core_particles
-        dist1 = dist1 - boxl*np.rint(dist1/boxl)
-        dist1norm = np.linalg.norm(dist1,axis=1)
-        
-        dist2 = patch2_particles-core_particles
-        dist2 = dist2 - boxl*np.rint(dist2/boxl)
-        dist2norm = np.linalg.norm(dist2,axis=1)
-            
-        fig, ax = plt.subplots(figsize=(20,20))
-        ax.set_aspect('equal')
 
-        ax.set_xlim([0, 1])
-        ax.set_ylim([0, 1])
-
-        for i, center_i in enumerate(core_particles):
-
-            center = (center_i[0]/boxl,center_i[1]/boxl)    
-            c = plt.Circle(center,
-                           radius, 
-                           fc='#C80036',
-                           ec="k",
-                           linewidth=0.1)
-            
-      
-            ax.axis("off")
-            ax.add_patch(c)
-            
-            c1x, c1y, c2x,c2y = (0,0,0,0) 
-            d1x, d1y, d2x,d2y = (0,0,0,0) 
-             
-            if args.dipole == "lateral":
-                c1x = center_i[0]/boxl + dist1[i,0]/boxl
-                c1y = center_i[1]/boxl + dist1[i,1]/boxl
-            
-                # rotate 90 degrees 
-                d1x =  - dist1[i,1]/boxl
-                d1y =    dist1[i,0]/boxl
-            
-                c2x = center_i[0]/boxl + dist2[i,0]/boxl
-                c2y = center_i[1]/boxl + dist2[i,1]/boxl
-            
-                # rotate 90 degrees 
-                d2x =    dist2[i,1]/boxl
-                d2y =  - dist2[i,0]/boxl
-                
-            if args.dipole == "radial":
-                c1x = center_i[0]/boxl + dist1[i,0]/boxl
-                c1y = center_i[1]/boxl + dist1[i,1]/boxl
-            
-                d1x =    0.05*(dist1[i,0]/boxl)/(np.linalg.norm(dist1/boxl))
-                d1y =    0.05*(dist1[i,1]/boxl)/(np.linalg.norm(dist1/boxl))
-            
-                # rotate 180 degrees 
-                c2x = center_i[0]/boxl + dist2[i,0]/boxl
-                c2y = center_i[1]/boxl + dist2[i,1]/boxl
-        
-                d2x =  d1x 
-                d2y =  d1y
-
-            
-            width=0.2*radius
-            ax.arrow(
-                    c1x, c1y, d1x, d1y,
-                    width = width,
-                    zorder = 10,
-                    head_width=width*3,
-                    head_length=width*3,
-                    linewidth = 0.1,
-                    fc = "#F8C794",
-                    ec="k")
-            
-            ax.arrow(
-                    c2x,c2y,d2x,d2y,  
-                    width = width,
-                    zorder = 10,
-                    head_width=width*3,
-                    head_length=width*3,
-                    linewidth = 0.1,
-                    fc = '#F8C794',
-                    ec = "k"
-                    )
-            
-        plt.savefig("pngs/frame_{}.png".format(j),dpi=300)
-        plt.savefig("pdfs/frame_{}.pdf".format(j))
-        plt.close(fig)
-
+   
   
