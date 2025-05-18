@@ -81,14 +81,16 @@ def read_mag2patch(t):
 def process_files(filen):
 
     ifile = "{}/traj.gz".format(filen)
+    Lambda = filen.split("_")[4]
+    Shift = filen.split("_")[2]
     Natoms, frames, Box  = read_mag2patch(ifile)
     print("Frames", frames.size, Box[0], Natoms)
     if frames.size > 0: 
-        freq = 5
+        freq = 10
         boxl=Box[0][0]
         radius=0.5/boxl
         
-        for j in range(len(frames)-1, len(frames),freq):
+        for j in range(0, len(frames),freq):
             
             frame = np.array(frames[j])
             core_particles = frame[::3,:2]*boxl
@@ -105,6 +107,7 @@ def process_files(filen):
                 
             fig, ax = plt.subplots(figsize=(20,20))
             ax.set_aspect('equal')
+            ax.set_title("shift = {}, $\lambda$ = {}".format(Shift,Lambda), loc="left")
 
             ax.set_xlim([0, 1])
             ax.set_ylim([0, 1])
@@ -113,9 +116,9 @@ def process_files(filen):
                 center = (center_i[0]/boxl,center_i[1]/boxl)    
                 c = plt.Circle(center,
                             radius, 
-                            fc='#C80036',
+                            fc='#8e44ad',
                             ec="k",
-                            linewidth=0.1)
+                            linewidth=0.01)
                 
         
                 ax.axis("off")
@@ -125,7 +128,7 @@ def process_files(filen):
                 d1x, d1y, d2x,d2y = (0,0,0,0) 
                 
                 # automatically assume that dipoles are lateral 
-                
+
                 c1x = center_i[0]/boxl + dist1[i,0]/boxl
                 c1y = center_i[1]/boxl + dist1[i,1]/boxl
             
@@ -148,8 +151,8 @@ def process_files(filen):
                         zorder = 10,
                         head_width=width*3,
                         head_length=width*3,
-                        linewidth = 0.1,
-                        fc = "#F8C794",
+                        linewidth = 0.01,
+                        fc = "#f1c40f ",
                         ec="k")
                 
                 ax.arrow(
@@ -158,13 +161,13 @@ def process_files(filen):
                         zorder = 10,
                         head_width=width*3,
                         head_length=width*3,
-                        linewidth = 0.1,
-                        fc = '#F8C794',
+                        linewidth = 0.01,
+                        fc = '#f1c40f ',
                         ec = "k"
                         )
                 
-            plt.savefig("pngs/frame_{}.png".format(filen),dpi=300)
-            plt.savefig("pdfs/frame_{}.pdf".format(filen))
+            plt.savefig("pngs/frame_{}_{}.png".format(i,filen),dpi=500)
+            #plt.savefig("pdfs/frame_{}_{}.pdf".format(i,filen))
             plt.close(fig)
 
 
