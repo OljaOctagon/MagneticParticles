@@ -116,7 +116,7 @@ def process_files(filen):
                 center = (center_i[0]/boxl,center_i[1]/boxl)    
                 c = plt.Circle(center,
                             radius, 
-                            fc='#8e44ad',
+                            fc='#8E44AD',
                             ec="k",
                             linewidth=0.01)
                 
@@ -152,7 +152,7 @@ def process_files(filen):
                         head_width=width*3,
                         head_length=width*3,
                         linewidth = 0.01,
-                        fc = "#f1c40f ",
+                        fc = "#F1C40F",
                         ec="k")
                 
                 ax.arrow(
@@ -162,7 +162,7 @@ def process_files(filen):
                         head_width=width*3,
                         head_length=width*3,
                         linewidth = 0.01,
-                        fc = '#f1c40f ',
+                        fc = '#F1C40F',
                         ec = "k"
                         )
                 
