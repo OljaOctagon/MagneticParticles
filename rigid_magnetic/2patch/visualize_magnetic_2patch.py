@@ -84,9 +84,8 @@ def process_files(filen):
     Lambda = filen.split("_")[4]
     Shift = filen.split("_")[2]
     Natoms, frames, Box  = read_mag2patch(ifile)
-    print("Frames", frames.size, Box[0], Natoms)
     if frames.size > 0: 
-        freq = 10
+        freq = 2 
         boxl=Box[0][0]
         radius=0.5/boxl
         
@@ -107,7 +106,7 @@ def process_files(filen):
                 
             fig, ax = plt.subplots(figsize=(20,20))
             ax.set_aspect('equal')
-            ax.set_title("shift = {}, $\lambda$ = {}".format(Shift,Lambda), loc="left")
+            ax.set_title("shift = {}, $\lambda$ = {}".format(Shift,Lambda), loc="left",fontsize=20)
 
             ax.set_xlim([0, 1])
             ax.set_ylim([0, 1])
@@ -166,8 +165,8 @@ def process_files(filen):
                         ec = "k"
                         )
                 
-            plt.savefig("pngs/frame_{}_{}.png".format(i,filen),dpi=500)
-            #plt.savefig("pdfs/frame_{}_{}.pdf".format(i,filen))
+            plt.savefig("pngs/frame_{}_{}.png".format(j,filen),dpi=300)
+            #plt.savefig("pdfs/frame_{}_{}.pdf".format(j,filen))
             plt.close(fig)
 
 
