@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Center Image with Surrounding Videos</title>
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      background-color: #f0f0f0;
+    }
+
+    .grid-container {
+      display: grid;
+      grid-template-areas:
+        "top top top"
+        "left center right"
+        "bottom bottom bottom";
+      grid-template-columns: 1fr auto 1fr;
+      grid-template-rows: auto auto auto;
+      gap: 20px;
+      align-items: center;
+      justify-items: center;
+    }
+
+    .center {
+      grid-area: center;
+    }
+
+    .top {
+      grid-area: top;
+    }
+
+    .bottom {
+      grid-area: bottom;
+    }
+
+    .left {
+      grid-area: left;
+    }
+
+    .right {
+      grid-area: right;
+    }
+
+    video, img {
+      max-width: 500px;
+      max-height: 400px;
+    }
+
+    .center img {
+      max-width: 400px;
+      max-height: 300px;
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-container">
+    <div class="top">
+      <video src="top.mp4" autoplay loop muted></video>
+    </div>
+    <div class="left">
+      <video src="left.mp4" autoplay loop muted></video>
+    </div>
+    <div class="center">
+      <img src="center.png" alt="Central Figure"/>
+    </div>
+    <div class="right">
+      <video src="right.mp4" autoplay loop muted></video>
+    </div>
+    <div class="bottom">
+      <video src="bottom.mp4" autoplay loop muted></video>
+    </div>
+  </div>
+</body>
+</html>
