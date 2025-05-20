@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import argparse 
 from matplotlib.patches import Wedge, Rectangle
 import multiprocessing
+import glob
 #from lammpstools.tools import read_mag2patch
 
 import numpy as np 
@@ -66,8 +67,7 @@ def read_mag2patch(t):
 
                     frame_nr_old = frame_nr
                     
-        #except (EOFError, IndexError, ValueError) as er:
-        except EOFError as er:
+        except (EOFError, IndexError, ValueError) as er:
             print("Caught error in {}:".format(t), er) 
     
         if Config:
@@ -89,7 +89,7 @@ def process_files(filen):
         boxl=Box[0][0]
         radius=0.5/boxl
         
-        for j in range(0, len(frames),freq):
+        for j in range(len(frames)-1, len(frames),freq):
             
             frame = np.array(frames[j])
             core_particles = frame[::3,:2]*boxl
@@ -165,7 +165,7 @@ def process_files(filen):
                         ec = "k"
                         )
                 
-            plt.savefig("pngs/frame_{}_{}.png".format(j,filen),dpi=300)
+            plt.savefig("all_pngs/frame_{}.png".format(filen),dpi=300)
             #plt.savefig("pdfs/frame_{}_{}.pdf".format(j,filen))
             plt.close(fig)
 
@@ -179,8 +179,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    dirs = pd.read_csv(args.f).values.flatten().tolist()
-    
+    #dirs = pd.read_csv(args.f).values.flatten().tolist()
+    dirs = glob.glob("mag2p_shift_*_rid_1")
+
     with multiprocessing.Pool(processes=8) as pool:
         pool.map(process_files,dirs)
         pool.close()
