@@ -10,6 +10,7 @@ import cProfile
 from scipy.spatial.distance import squareform
 from pathlib import Path
 import multiprocessing
+import freud
 
 def read_lammpstrj(t):
     Nskip = 9
@@ -227,6 +228,24 @@ def calculate_degree(cutoff,dist_squareform,Nparticles):
     
     return mean_degree, std_degree, neighbour_list, G
 
+
+def calculate_rdf(frame_i,bins,r_max):
+    lx_box = 270 
+    ly_box = 270
+    lz_box = 3
+
+    # Quasi 2D box pos 
+    box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box, periodic=[True, True, False])
+
+    # Compute g(r)
+    rdf = freud.density.RDF(bins=bins, r_max=r_max)
+    rdf.compute(system=(box, frame_i))
+
+    rdf_dict = dict(zip(rdf.bin_centers, rdf.rdf))
+
+    return rdf_dict
+    
+
 def process_files(idir):
     Nparticles = 1000 
     
@@ -240,9 +259,9 @@ def process_files(idir):
         
         # first neighbour cutoffs
         cutoff_1_5 = 1.5 
-        mean_degree_1_5, std_degree_1_5, neighbour_list_1_5, G  = calculate_degree(cutoff_1_5,dist_squareform, Nparticles)
+        mean_degree_1_5, std_degree_1_5, _, _  = calculate_degree(cutoff_1_5,dist_squareform, Nparticles)
         cutoff_1_8 = 1.8
-        mean_degree_1_8, std_degree_1_8, _,_ = calculate_degree(cutoff_1_8,dist_squareform, Nparticles)
+        mean_degree_1_8, std_degree_1_8, neighbour_list_1_8, G = calculate_degree(cutoff_1_8,dist_squareform, Nparticles)
 
         # second neighbour cutoff 
         cutoff_2 = 2.0 
@@ -266,8 +285,11 @@ def process_files(idir):
         
         # radius of gyration     
         Rg_result_dict, mean_Rg, std_Rg = radius_of_gyration(dist_squareform,clusters)
-        Moments_dict = mu_orientation_distribution(neighbour_list_1_5, frames_mu[-1])
-        
+        Moments_dict = mu_orientation_distribution(neighbour_list_1_8, frames_mu[-1])
+
+        # rdf 
+        rdf_dict = calculate_rdf(frames[-1],30,6)
+       
         new_results = {}
         new_results["file_id"] = idir
         new_results["lambda"] = float(idir.split("_")[4])
@@ -289,6 +311,8 @@ def process_files(idir):
         
         new_results = new_results | Moments_dict 
         new_results = new_results | Rg_result_dict 
+        new_results = new_results | rdf_dict
+
         new_results = pd.DataFrame.from_dict(new_results, orient="index").T
          
         return new_results 
