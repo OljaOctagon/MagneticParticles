@@ -235,7 +235,8 @@ def calculate_rdf(frame_i,bins,r_max):
     lz_box = 3
 
     # Quasi 2D box pos 
-    box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box, periodic=[True, True, False])
+    box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box)
+    box.periodic = [True, True, False ]
 
     # Compute g(r)
     rdf = freud.density.RDF(bins=bins, r_max=r_max)
