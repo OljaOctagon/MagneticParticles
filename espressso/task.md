@@ -1,5 +1,8 @@
 ### Espresso tests on cluster
 * get binary format to work 
+* try out checkpointing, make sure it works 
+
+-------
 * try out magentic simulations on dev queue and maybe Institute queue 
 * try out parallelization for espresso 
 * try out simple set for 4shiftsx4lambdasx3fieldstrengths = 48 state points 
