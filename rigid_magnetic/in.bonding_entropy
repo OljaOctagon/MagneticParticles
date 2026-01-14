@@ -2,14 +2,15 @@ dimension 3
 boundary p p f
 units lj
 atom_style hybrid molecular sphere dipole
-region simbox block 0 5 0 0 5 0 3  
+region simbox block 0 5 0 5 0 3  
 region pbox block 0 5 0 5 1.45 1.55
-create_box 2 simbox
+create_box 2 simbox bond/types 1 extra/bond/per/atom 3
 
-molecule dimer1 dimers.txt
-molecule dimer2 dimers.txt
-create_atoms atom1 single 2 2 0 pbox mol dimer1
-create_atoms atom2 single 2 3 0 pbox mol dimer2
+molecule dimer dimers.txt
+
+create_atoms 0 single 2.0 2.0 1.5 mol dimer 3535
+create_atoms 0 single 2.0 3.0 1.5 mol dimer 14254
+
 
 neighbor 1.0 bin
 neigh_modify check yes delay 0 every 1 
