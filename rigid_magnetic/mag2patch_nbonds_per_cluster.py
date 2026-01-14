@@ -222,13 +222,19 @@ def calculate_size_per_cluster(G):
     return cluster_sizes
 
 
-def comprehensive_structure_classification(G, clustering_threshold=0.5):
+def comprehensive_structure_classification(
+    G,
+    clustering_threshold=0.5,
+    liquid_threshold=0.9,
+    Nparticles=1000,
+):
     """
     Comprehensive classification combining strict ring/chain detection
     with branching analysis and clustering.
 
-    Ring: All particles have exactly degree 2, only one cycle of cluster size
+    Ring: n edges = n nodes AND all particles have exactly degree 2
     Chain: All particles have degree 1 or 2, at least 2 with degree 1, no cycles
+    Liquid: Most particles are singlets (degree 0, unbonded)
     Strongly Clustered: Average clustering coefficient > threshold (high local density)
     Branch: Contains branch points (degree >= 3)
     Tree: No cycles but has branching
@@ -239,6 +245,9 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
     for cluster_id, component in enumerate(nx.connected_components(G)):
         subgraph = G.subgraph(component)
         cluster_size = len(component)
+
+        # It is not a liquid as there bonds
+        is_liquid = False
 
         # Get degree distribution
         degrees = dict(subgraph.degree())
@@ -253,6 +262,7 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
         cyclomatic_complexity = edges - nodes + 1
 
         # Count particles by degree
+        degree_0_count = 0
         degree_1_count = sum(1 for d in degree_list if d == 1)
         degree_2_count = sum(1 for d in degree_list if d == 2)
         degree_3_plus_count = sum(1 for d in degree_list if d >= 3)
@@ -260,22 +270,12 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
         # Clustering coefficient
         clustering_coeff = nx.average_clustering(subgraph)
 
-        # Find cycles
-        try:
-            cycles = nx.minimum_cycle_basis(subgraph)
-            num_cycles = len(cycles)
-            longest_cycle = max(len(cycle) for cycle in cycles) if cycles else 0
-        except:
-            num_cycles = 0
-            longest_cycle = 0
-
-        # STRICT RING: all degree 2 AND only one cycle of size = cluster_size
+        # STRICT RING: n edges = n nodes AND all degree 2
         is_strict_ring = (
-            degree_1_count == 0
+            edges == nodes
+            and degree_1_count == 0
             and degree_2_count == cluster_size
             and degree_3_plus_count == 0
-            and num_cycles == 1
-            and longest_cycle == cluster_size
         )
 
         # STRICT CHAIN: all degree 1 or 2, at least 2 with degree 1, no cycles
@@ -296,6 +296,7 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
         is_complex_network = cyclomatic_complexity > 0 and is_branched
 
         # Determine structure type (priority order)
+
         if is_strict_ring:
             structure_type = "ring"
         elif is_strict_chain:
@@ -314,6 +315,7 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
         classification[cluster_id] = {
             "cluster_size": cluster_size,
             "structure_type": structure_type,
+            "is_liquid": is_liquid,
             "is_strict_ring": is_strict_ring,
             "is_strict_chain": is_strict_chain,
             "is_strongly_clustered": is_strongly_clustered,
@@ -323,12 +325,11 @@ def comprehensive_structure_classification(G, clustering_threshold=0.5):
             "avg_degree": avg_degree,
             "avg_clustering_coefficient": clustering_coeff,
             "branch_points": branch_points,
+            "degree_0_count": degree_0_count,
             "degree_1_count": degree_1_count,
             "degree_2_count": degree_2_count,
             "degree_3_plus_count": degree_3_plus_count,
             "cyclomatic_complexity": cyclomatic_complexity,
-            "num_cycles": num_cycles,
-            "longest_cycle": longest_cycle,
         }
 
     return classification
@@ -372,20 +373,62 @@ def process_files(idir):
             # Structure classification metrics
             class_info = classification[cluster_id]
             new_results["structure_type"] = class_info["structure_type"]
+            new_results["is_liquid"] = class_info["is_liquid"]
             new_results["is_strict_ring"] = class_info["is_strict_ring"]
             new_results["is_strict_chain"] = class_info["is_strict_chain"]
+            new_results["is_strongly_clustered"] = class_info["is_strongly_clustered"]
             new_results["is_tree"] = class_info["is_tree"]
             new_results["is_complex_network"] = class_info["is_complex_network"]
             new_results["is_branched"] = class_info["is_branched"]
+            new_results["avg_clustering_coefficient"] = class_info[
+                "avg_clustering_coefficient"
+            ]
             new_results["branch_points"] = class_info["branch_points"]
+            new_results["degree_0_count"] = class_info["degree_0_count"]
             new_results["degree_1_count"] = class_info["degree_1_count"]
             new_results["degree_2_count"] = class_info["degree_2_count"]
             new_results["degree_3_plus_count"] = class_info["degree_3_plus_count"]
             new_results["cyclomatic_complexity"] = class_info["cyclomatic_complexity"]
-            new_results["num_cycles"] = class_info["num_cycles"]
-            new_results["longest_cycle"] = class_info["longest_cycle"]
 
             results_list.append(new_results)
+
+        # Add artificial singleton rows for unbonded particles (label as liquid)
+        # Nodes present in G are those with at least one bond; remaining particles
+        # are unbonded singlets and should be represented as cluster_size=1
+        nodes_in_graph = G.number_of_nodes()
+        num_singletons = max(0, Nparticles - nodes_in_graph)
+
+        # Determine starting cluster_id for singletons
+        if avg_degrees:
+            next_cluster_id = max(avg_degrees.keys()) + 1
+        else:
+            next_cluster_id = 0
+
+        for i in range(num_singletons):
+            singleton_id = next_cluster_id + i
+            sres = {}
+            sres["file_id"] = idir
+            sres["lambda"] = float(idir.split("_")[4])
+            sres["shift"] = float(idir.split("_")[2])
+            sres["cluster_id"] = singleton_id
+            sres["cluster_size"] = 1
+            sres["avg_degree"] = 0.0
+            sres["structure_type"] = "liquid"
+            sres["is_liquid"] = True
+            sres["is_strict_ring"] = False
+            sres["is_strict_chain"] = False
+            sres["is_strongly_clustered"] = False
+            sres["is_tree"] = False
+            sres["is_complex_network"] = False
+            sres["is_branched"] = False
+            sres["avg_clustering_coefficient"] = 0.0
+            sres["branch_points"] = 0
+            sres["degree_0_count"] = 1
+            sres["degree_1_count"] = 0
+            sres["degree_2_count"] = 0
+            sres["degree_3_plus_count"] = 0
+            sres["cyclomatic_complexity"] = 0
+            results_list.append(sres)
 
         new_results_df = pd.DataFrame(results_list)
 
