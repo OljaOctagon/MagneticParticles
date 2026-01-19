@@ -433,7 +433,6 @@ def process_files(idir):
         new_results_df = pd.DataFrame(results_list)
 
         return new_results_df
-
     else:
         print("Problem with folder {}. Results not evaluated".format(idir))
 
