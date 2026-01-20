@@ -42,7 +42,13 @@ def read_lammpstrj(t):
                             frames[-1].append(np.array([x, y, z]))
 
                     frame_nr_old = frame_nr
-        except (EOFError, IndexError, ValueError) as er:
+        except (
+            EOFError,
+            IndexError,
+            ValueError,
+            gzip.BadGzipFile,
+            gzip.zlib.error,
+        ) as er:
             print("Caught error in {}:".format(t), er)
 
         if frames:
@@ -88,7 +94,13 @@ def read_moments(mu):
 
                     frame_nr_old = frame_nr
 
-        except (EOFError, IndexError, ValueError) as er:
+        except (
+            EOFError,
+            IndexError,
+            ValueError,
+            gzip.BadGzipFile,
+            gzip.zlib.error,
+        ) as er:
             print("Caught error in {}:".format(mu), er)
 
         if frames:
@@ -254,19 +266,34 @@ def calculate_hexatic_order(frame_i):
     lz_box = 3
 
     # Quasi 2D box pos
-    box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box)
-    box.periodic = [True, True, False]
+    box = freud.box.Box(Lx=lx_box, Ly=ly_box, is2D=True)
 
-    # Compute hexatic order
-    hexatic = freud.order.Hexatic(k=6)
-    hexatic.compute(system=(box, frame_i), neighbors={"num_neighbors": 6})
-    hexatic_order_6 = hexatic.particle_order
+    pos = frame_i[:, :2]
+    pos_padded = np.column_stack([pos[:, 0], pos[:, 1], np.zeros(len(pos))])
+
+    aq = freud.locality.AABBQuery(box, pos_padded)
+    nlist = aq.query(pos_padded, {"r_max": 1.6, "exclude_ii": True}).toNeighborList()
+
+    hex6 = freud.order.Hexatic(k=6)
+    hex6.compute((box, pos_padded), neighbors=nlist)
+    hexatic_order_6 = hex6.particle_order
     mean_Psi_6 = np.abs(np.mean(hexatic_order_6))
 
-    hexatic = freud.order.Hexatic(k=4)
-    hexatic.compute(system=(box, frame_i), neighbors={"num_neighbors": 4})
-    hexatic_order_4 = hexatic.particle_order
+    hex4 = freud.order.Hexatic(k=4)
+    hex4.compute((box, pos_padded), neighbors=nlist)
+    hexatic_order_4 = hex4.particle_order
     mean_Psi_4 = np.abs(np.mean(hexatic_order_4))
+
+    # Compute hexatic order
+    # hexatic = freud.order.Hexatic(k=6)
+    # hexatic.compute(system=(box, pos_padded), neighbors={"num_neighbors": 6})
+    # hexatic_order_6 = hexatic.particle_order
+    # mean_Psi_6 = np.abs(np.mean(hexatic_order_6))
+
+    # hexatic = freud.order.Hexatic(k=4)
+    # hexatic.compute(system=(box, pos_padded), neighbors={"num_neighbors": 4})
+    # hexatic_order_4 = hexatic.particle_order
+    # mean_Psi_4 = np.abs(np.mean(hexatic_order_4))
 
     return mean_Psi_6, mean_Psi_4
 
