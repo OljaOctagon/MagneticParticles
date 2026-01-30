@@ -260,6 +260,116 @@ def calculate_rdf(frame_i, bins, r_max):
 import freud
 
 
+def calculate_number_of_q_particles(
+    qmag, q_threshold, r_cut, min_cluster_size, Nparticles, nn, min_neighbors, box, pos
+):
+    # selection mask: q6 AND coordination >= min_neighbors
+    sel = (qmag >= float(q_threshold)) & (nn >= int(min_neighbors))
+    sel_idx = np.where(sel)[0]
+
+    if sel_idx.size == 0:
+        return 0.0
+
+    # restrict to selected particles
+    pos_sel = pos[sel_idx]
+
+    # build neighbor list among selected particles (same cutoff)
+    aq_sel = freud.locality.AABBQuery(box, pos_sel)
+    nlist_sel = aq_sel.query(
+        pos_sel, {"r_max": float(r_cut), "exclude_ii": True}
+    ).toNeighborList()
+
+    # cluster on selected subset
+    cl = freud.cluster.Cluster()
+    cl.compute((box, pos_sel), neighbors=nlist_sel)
+    cidx = cl.cluster_idx
+
+    props = freud.cluster.ClusterProperties()
+    props.compute((box, pos_sel), cidx)
+    sizes = props.sizes  # size per cluster label
+
+    good_clusters = sizes >= int(min_cluster_size)
+
+    # count selected particles that are in clusters of size >= min_cluster_size
+    # each selected particle has a cluster id in cidx; map that to "good or not"
+    good_particle = good_clusters[cidx]
+    p_q = int(np.sum(good_particle)) / Nparticles
+
+    return p_q
+
+
+def calculate_steinhardt_q4_q6(frame_i):
+    lx_box = 270
+    ly_box = 270
+    lz_box = 270
+
+    r_cut = 1.8
+    min_cluster_size = 6
+    Nparticles = frame_i.shape[0]
+    min_neighbors = 4
+    q6_threshold = 0.4
+    q4_threshold = 0.3
+
+    # Quasi 2D box pos
+    box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box)
+    box.periodic = [True, True, True]
+
+    pos = frame_i
+
+    aq = freud.locality.AABBQuery(box, pos)
+    nlist = aq.query(pos, {"r_max": r_cut, "exclude_ii": True}).toNeighborList()
+
+    steinhardt = freud.order.Steinhardt(
+        l=[4, 6],
+        average=True,  # Lechner–Dellago averaged OP
+        wl=False,  # compute q_l (not w_l)
+    )
+
+    steinhardt.compute(
+        system=(box, pos),
+        neighbors=nlist,
+    )
+
+    q4 = steinhardt.particle_order[:, 0]
+    q6 = steinhardt.particle_order[:, 1]
+
+    mean_q4 = np.mean(q4)
+    mean_q6 = np.mean(q6)
+
+    # Usually we threshold by magnitude
+
+    q6mag = np.abs(q6)
+    q4mag = np.abs(q4)
+
+    # coordination number within cutoff for every particle
+    nn = np.bincount(nlist.query_point_indices, minlength=len(pos))
+
+    p_q6 = calculate_number_of_q_particles(
+        q6mag,
+        q6_threshold,
+        r_cut,
+        min_cluster_size,
+        Nparticles,
+        nn,
+        min_neighbors,
+        box,
+        pos,
+    )
+    p_q4 = calculate_number_of_q_particles(
+        q4mag,
+        q4_threshold,
+        r_cut,
+        min_cluster_size,
+        Nparticles,
+        nn,
+        min_neighbors,
+        box,
+        pos,
+    )
+
+    return mean_q4, mean_q6, p_q6, p_q4
+
+
 def calculate_hexatic_order(frame_i):
     lx_box = 270
     ly_box = 270
@@ -283,17 +393,6 @@ def calculate_hexatic_order(frame_i):
     hex4.compute((box, pos_padded), neighbors=nlist)
     hexatic_order_4 = hex4.particle_order
     mean_Psi_4 = np.abs(np.mean(hexatic_order_4))
-
-    # Compute hexatic order
-    # hexatic = freud.order.Hexatic(k=6)
-    # hexatic.compute(system=(box, pos_padded), neighbors={"num_neighbors": 6})
-    # hexatic_order_6 = hexatic.particle_order
-    # mean_Psi_6 = np.abs(np.mean(hexatic_order_6))
-
-    # hexatic = freud.order.Hexatic(k=4)
-    # hexatic.compute(system=(box, pos_padded), neighbors={"num_neighbors": 4})
-    # hexatic_order_4 = hexatic.particle_order
-    # mean_Psi_4 = np.abs(np.mean(hexatic_order_4))
 
     return mean_Psi_6, mean_Psi_4
 
@@ -348,6 +447,7 @@ def process_files(idir):
         rdf_dict = calculate_rdf(frames[-1], 30, 6)
 
         mean_Psi_6, mean_Psi_4 = calculate_hexatic_order(frames[-1])
+        mean_q4, mean_q6, p_q6, p_q4 = calculate_steinhardt_q4_q6(frames[-1])
 
         new_results = {}
         new_results["file_id"] = idir
@@ -368,6 +468,10 @@ def process_files(idir):
         new_results["std_radius_of_gyration"] = std_Rg
         new_results["mean_Psi_6"] = mean_Psi_6
         new_results["mean_Psi_4"] = mean_Psi_4
+        new_results["mean_q4"] = mean_q4
+        new_results["mean_q6"] = mean_q6
+        new_results["p_q6"] = p_q6
+        new_results["p_q4"] = p_q4
 
         new_results = new_results | Moments_dict
         new_results = new_results | Rg_result_dict
