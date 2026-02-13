@@ -335,6 +335,7 @@ def comprehensive_structure_classification(
     return classification
 
 
+"""
 def process_files(idir):
     Nparticles = 1000
 
@@ -436,7 +437,208 @@ def process_files(idir):
     else:
         print("Problem with folder {}. Results not evaluated".format(idir))
 
+"""
 
+TYPE_TO_CODE = {
+    "liquid": 0,
+    "ring": 1,
+    "chain": 2,
+    "strongly_clustered": 3,
+    "complex_network": 4,
+    "tree": 5,
+    "branched": 6,
+    "other": 7,
+}
+
+
+def analyze_one_frame(
+    xyz,
+    *,
+    idir: str,
+    frame_index: int,
+    Nparticles: int,
+    cutoff: float = 1.6,
+    export_vmd: bool = False,
+):
+    """
+    Returns:
+      df_frame: rows per cluster (incl. artificial singletons) for THIS frame
+      vmd_labels: (Nparticles,) float32 or None
+    """
+    dist = numba_distances(xyz)
+    dist_squareform = squareform(dist)
+    G = generate_graph(cutoff, dist_squareform)
+
+    avg_degrees = calculate_degree_per_cluster(G, Nparticles)
+    cluster_sizes = calculate_size_per_cluster(G)
+    classification = comprehensive_structure_classification(G)
+
+    # --- clusters -> rows
+    results_list = []
+    for cluster_id in avg_degrees.keys():
+        class_info = classification[cluster_id]
+        results_list.append(
+            {
+                "file_id": idir,
+                "frame": frame_index,  # <--- add this
+                "lambda": float(idir.split("_")[4]),
+                "shift": float(idir.split("_")[2]),
+                "cluster_id": cluster_id,
+                "cluster_size": cluster_sizes[cluster_id],
+                "avg_degree": avg_degrees[cluster_id],
+                "structure_type": class_info["structure_type"],
+                "is_liquid": class_info["is_liquid"],
+                "is_strict_ring": class_info["is_strict_ring"],
+                "is_strict_chain": class_info["is_strict_chain"],
+                "is_strongly_clustered": class_info["is_strongly_clustered"],
+                "is_tree": class_info["is_tree"],
+                "is_complex_network": class_info["is_complex_network"],
+                "is_branched": class_info["is_branched"],
+                "avg_clustering_coefficient": class_info["avg_clustering_coefficient"],
+                "branch_points": class_info["branch_points"],
+                "degree_0_count": class_info["degree_0_count"],
+                "degree_1_count": class_info["degree_1_count"],
+                "degree_2_count": class_info["degree_2_count"],
+                "degree_3_plus_count": class_info["degree_3_plus_count"],
+                "cyclomatic_complexity": class_info["cyclomatic_complexity"],
+            }
+        )
+
+    # --- add artificial singletons rows (liquid)
+    nodes_in_graph = G.number_of_nodes()
+    num_singletons = max(0, Nparticles - nodes_in_graph)
+    next_cluster_id = (max(avg_degrees.keys()) + 1) if avg_degrees else 0
+
+    for i in range(num_singletons):
+        singleton_id = next_cluster_id + i
+        results_list.append(
+            {
+                "file_id": idir,
+                "frame": frame_index,
+                "lambda": float(idir.split("_")[4]),
+                "shift": float(idir.split("_")[2]),
+                "cluster_id": singleton_id,
+                "cluster_size": 1,
+                "avg_degree": 0.0,
+                "structure_type": "liquid",
+                "is_liquid": True,
+                "is_strict_ring": False,
+                "is_strict_chain": False,
+                "is_strongly_clustered": False,
+                "is_tree": False,
+                "is_complex_network": False,
+                "is_branched": False,
+                "avg_clustering_coefficient": 0.0,
+                "branch_points": 0,
+                "degree_0_count": 1,
+                "degree_1_count": 0,
+                "degree_2_count": 0,
+                "degree_3_plus_count": 0,
+                "cyclomatic_complexity": 0,
+            }
+        )
+
+    df_frame = pd.DataFrame(results_list)
+
+    # --- optional: per-particle labels for VMD (structure_type code)
+    vmd_labels = None
+    if export_vmd:
+        labels = np.full(Nparticles, -1, dtype=np.float32)
+
+        # label bonded particles by their cluster's structure_type
+        for cluster_id, component in enumerate(nx.connected_components(G)):
+            stype = classification[cluster_id]["structure_type"]
+            code = float(TYPE_TO_CODE.get(stype, TYPE_TO_CODE["other"]))
+            for node in component:
+                labels[int(node)] = code
+
+        # label remaining (unbonded) as liquid
+        labels[labels < 0] = float(TYPE_TO_CODE["liquid"])
+        vmd_labels = labels
+
+    return df_frame, vmd_labels
+
+
+def process_files(idir, *, mode="last", export_vmd=False, max_frames=None):
+    Nparticles = 1000
+
+    frames = read_lammpstrj(f"{idir}traj.gz")
+    frames_mu = read_moments(f"{idir}mu.gz")
+
+    if not (frames.size > 0 and frames_mu.size > 0):
+        print(f"Problem with folder {idir}. Results not evaluated")
+        return None
+
+    # select which frames to analyze
+    if mode == "last":
+        frame_indices = [len(frames) - 1]
+    elif mode == "all":
+        frame_indices = list(range(len(frames)))
+    elif mode == "subsample":
+        step = 10  # pick your stride
+        frame_indices = list(range(0, len(frames), step))
+    else:
+        raise ValueError("mode must be one of: last, all, subsample")
+
+    if max_frames is not None:
+        frame_indices = frame_indices[:max_frames]
+
+    dfs = []
+    vmd_label_frames = []  # list of (N,) arrays
+
+    for t in frame_indices:
+        df_frame, labels = analyze_one_frame(
+            frames[t],
+            idir=idir,
+            frame_index=t,
+            Nparticles=Nparticles,
+            cutoff=1.8,
+            export_vmd=export_vmd,
+        )
+        dfs.append(df_frame)
+        if export_vmd:
+            vmd_label_frames.append(labels)
+
+    df_out = pd.concat(dfs, ignore_index=True)
+
+    # write VMD label matrix (T,N) if requested
+    if export_vmd:
+        label_matrix = np.stack(vmd_label_frames, axis=0)  # (T, Nparticles)
+        np.savetxt(f"{idir}cluster_type_user.dat", label_matrix, fmt="%.0f")
+
+        # optional legend
+        with open(f"{idir}cluster_type_legend.txt", "w") as f:
+            for k, v in TYPE_TO_CODE.items():
+                f.write(f"{int(v)}\t{k}\n")
+
+    return df_out
+
+
+from functools import partial
+
+if __name__ == "__main__":
+    dirs = glob.glob("mag2p_shift*/")
+
+    worker = partial(process_files, mode="all", export_vmd=True, max_frames=200)
+
+    with multiprocessing.Pool(processes=12) as pool:
+        new_results = pool.map(worker, dirs)
+
+    df = pd.concat([x for x in new_results if x is not None], ignore_index=True)
+
+    currentDateAndTime = datetime.now()
+    df.to_pickle(
+        "MAG2P_order_parameters_per_cluster-{}-{}-{}-{}:{}:{}.pickle".format(
+            currentDateAndTime.year,
+            currentDateAndTime.month,
+            currentDateAndTime.day,
+            currentDateAndTime.hour,
+            currentDateAndTime.minute,
+            currentDateAndTime.second,
+        )
+    )
+
+"""
 if __name__ == "__main__":
     df = pd.DataFrame()
     dirs = glob.glob("mag2p_shift*/")
@@ -458,3 +660,4 @@ if __name__ == "__main__":
             currentDateAndTime.second,
         )
     )
+"""
