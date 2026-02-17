@@ -257,9 +257,6 @@ def calculate_rdf(frame_i, bins, r_max):
     return rdf_dict
 
 
-import freud
-
-
 def calculate_number_of_q_particles(
     qmag, q_threshold, r_cut, min_cluster_size, Nparticles, nn, min_neighbors, box, pos
 ):
@@ -333,8 +330,18 @@ def calculate_steinhardt_q4_q6(frame_i):
     q4 = steinhardt.particle_order[:, 0]
     q6 = steinhardt.particle_order[:, 1]
 
+    # replace NaN with 0 (for particles with no neighbors)
+    q4 = np.nan_to_num(q4)
+    q6 = np.nan_to_num(q6)
+
     mean_q4 = np.mean(q4)
     mean_q6 = np.mean(q6)
+
+    q4_hist, bin_edges = np.histogram(q4, bins=50, range=(0, 1), density=True)
+    q4_dict = dict(zip("q4_" + bin_edges[:-1].astype(str), q4_hist))
+
+    q6_hist = np.histogram(q6, bins=50, range=(0, 1), density=True)
+    q6_dict = dict(zip("q6_" + bin_edges[:-1].astype(str), q6_hist))
 
     # Usually we threshold by magnitude
 
@@ -367,7 +374,14 @@ def calculate_steinhardt_q4_q6(frame_i):
         pos,
     )
 
-    return mean_q4, mean_q6, p_q6, p_q4
+    return (
+        mean_q4,
+        mean_q6,
+        p_q6,
+        p_q4,
+        q4_dict,
+        q6_dict,
+    )
 
 
 def calculate_hexatic_order(frame_i):
@@ -447,7 +461,9 @@ def process_files(idir):
         rdf_dict = calculate_rdf(frames[-1], 30, 6)
 
         mean_Psi_6, mean_Psi_4 = calculate_hexatic_order(frames[-1])
-        mean_q4, mean_q6, p_q6, p_q4 = calculate_steinhardt_q4_q6(frames[-1])
+        mean_q4, mean_q6, p_q6, p_q4, q4_dict, q6_dict = calculate_steinhardt_q4_q6(
+            frames[-1]
+        )
 
         new_results = {}
         new_results["file_id"] = idir
@@ -476,6 +492,8 @@ def process_files(idir):
         new_results = new_results | Moments_dict
         new_results = new_results | Rg_result_dict
         new_results = new_results | rdf_dict
+        new_results = new_results | q4_dict
+        new_results = new_results | q6_dict
 
         new_results = pd.DataFrame.from_dict(new_results, orient="index").T
 
