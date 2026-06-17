@@ -304,8 +304,8 @@ def calculate_steinhardt_q4_q6(frame_i):
     min_cluster_size = 6
     Nparticles = frame_i.shape[0]
     min_neighbors = 4
-    q6_threshold = 0.4
-    q4_threshold = 0.3
+    q6_threshold = 0.35
+    q4_threshold = 0.35
 
     # Quasi 2D box pos
     box = freud.box.Box(Lx=lx_box, Ly=ly_box, Lz=lz_box)
