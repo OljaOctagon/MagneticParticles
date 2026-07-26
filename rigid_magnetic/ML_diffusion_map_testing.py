@@ -43,10 +43,10 @@ STATE_LAMBDA_MAX = 30.0
 LAMBDA_COLOR_GAMMA = 0.5
 LAMBDA_COLOR_VMIN = 0.0
 LAMBDA_COLOR_VMAX = 30.0
-SHIFT_MIN, SHIFT_MAX = 0.0, 0.7
 TICK_FONT = 14
 TITLE_FONT = 16
-EMBEDDING_MARKER_SIZE = 5
+EMBEDDING_MARKER_SIZE = 4
+EMBEDDING_MARKER_OPACITY = 0.65
 MISSING_CELL_COLOR = "#bdbdbd"
 META_COLUMNS = ["file_id", "lambda", "shift"]
 DROP_COLUMNS = [
@@ -193,6 +193,15 @@ def configure_lambda_colorbar(fig: go.Figure) -> None:
             tickvals=nonlinear_lambda_colors(tick_values),
             ticktext=[f"{value:g}" for value in tick_values],
         ),
+    )
+
+
+def configure_shift_colorbar(fig: go.Figure, shift_min: float, shift_max: float) -> None:
+    """Use the complete observed shift range for a linear colorbar."""
+    fig.update_coloraxes(
+        cmin=shift_min,
+        cmax=shift_max,
+        colorbar=dict(title="shift"),
     )
 
 
@@ -454,16 +463,18 @@ def build_initial_embedding_plots(
     state_shifts: np.ndarray,
     directories: dict[str, Path],
     guppy: list[list[float | str]],
-    gem: list[list[float | str]],
+    rainforest: list[list[float | str]],
+    shift_limits: tuple[float, float],
 ) -> None:
     logging.info(
-        "Computing exploratory 2D spectral embeddings for %d feature specifications",
+        "Computing exploratory spectral embeddings for %d feature specifications",
         len(EXPLORATORY_SET_GROUPS),
     )
     for set_name, groups in EXPLORATORY_SET_GROUPS.items():
         columns = feature_columns_for_groups(feature_groups, groups)
         embedding = SpectralEmbedding(
-            n_components=2,
+            # sklearn returns non-trivial spectral coordinates, excluding the constant mode.
+            n_components=3,
             affinity="nearest_neighbors",
             n_neighbors=selected_k,
             random_state=SEED,
@@ -477,75 +488,115 @@ def build_initial_embedding_plots(
         scatter_df["embedding_2"] = embedding[:, 1]
         scatter_df["selected_k"] = selected_k
         scatter_df["lambda_color"] = nonlinear_lambda_colors(scatter_df["lambda"])
-        scatter = px.scatter(
-            scatter_df,
-            x="embedding_1",
-            y="embedding_2",
-            color="lambda_color",
-            color_continuous_scale=gem,
-            range_color=[0.0, 1.0],
-            hover_data={
-                "file_id": True,
-                "lambda": ":.5g",
-                "lambda_color": False,
-                "shift": ":.5g",
-                "selected_k": True,
-                "embedding_1": ":.6g",
-                "embedding_2": ":.6g",
-            },
-            labels={
-                "embedding_1": "Spectral coordinate 1",
-                "embedding_2": "Spectral coordinate 2",
-                "lambda_color": "lambda",
-            },
-            title=f"{label}: 2D spectral embedding, k={selected_k}",
-            render_mode="svg",
-            opacity=0.7,
-        )
-        scatter.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
-        scatter.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
-        configure_lambda_colorbar(scatter)
-        scatter.update_xaxes(showgrid=False, zeroline=False)
-        scatter.update_yaxes(showgrid=False, zeroline=False)
-        save_plotly_figure(
-            scatter,
-            directories["scatters"] / f"initial_embedding_{set_name}_k{selected_k}",
-            rows=1,
-            cols=1,
-            panel_width=850,
-            panel_height=620,
-        )
-
-        stats = state_stat_table(metadata, embedding[:, 0])
-        mean_grid = state_grid(stats, "mean", state_lambdas, state_shifts)
-        count_grid = state_grid(stats, "count", state_lambdas, state_shifts)
-        vmax = max(finite_abs_max(mean_grid), 1e-12)
-        state_fig = go.Figure(
-            heatmap_trace(
-                mean_grid,
-                count_grid,
-                coloraxis="coloraxis",
-                quantity_label="mean spectral coordinate 1",
+        for color_variable, color_column, colorscale, color_range, colorbar_config in [
+            (
+                "lambda",
+                "lambda_color",
+                rainforest,
+                [0.0, 1.0],
+                lambda figure: configure_lambda_colorbar(figure),
+            ),
+            (
+                "shift",
+                "shift",
+                rainforest,
+                list(shift_limits),
+                lambda figure: configure_shift_colorbar(figure, *shift_limits),
+            ),
+        ]:
+            scatter = px.scatter(
+                scatter_df,
+                x="embedding_1",
+                y="embedding_2",
+                color=color_column,
+                color_continuous_scale=colorscale,
+                range_color=color_range,
+                hover_data={
+                    "file_id": True,
+                    "lambda": ":.5g",
+                    "lambda_color": False,
+                    "shift": ":.5g",
+                    "selected_k": True,
+                    "embedding_1": ":.6g",
+                    "embedding_2": ":.6g",
+                },
+                labels={
+                    "embedding_1": "Spectral coordinate 1",
+                    "embedding_2": "Spectral coordinate 2",
+                    "lambda_color": "lambda",
+                    "shift": "shift",
+                },
+                title=f"{label}: 2D spectral embedding, k={selected_k}, coloured by {color_variable}",
+                render_mode="svg",
+                opacity=EMBEDDING_MARKER_OPACITY,
             )
+            scatter.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
+            scatter.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
+            colorbar_config(scatter)
+            scatter.update_xaxes(showgrid=False, zeroline=False)
+            scatter.update_yaxes(showgrid=False, zeroline=False)
+            save_plotly_figure(
+                scatter,
+                directories["scatters"] / f"initial_embedding_{set_name}_k{selected_k}_{color_variable}",
+                rows=1,
+                cols=1,
+                panel_width=850,
+                panel_height=620,
+            )
+
+        vector_grids = []
+        vector_counts = []
+        for vector_index in range(3):
+            stats = state_stat_table(metadata, embedding[:, vector_index])
+            vector_grids.append(
+                state_grid(stats, "mean", state_lambdas, state_shifts)
+            )
+            vector_counts.append(
+                state_grid(stats, "count", state_lambdas, state_shifts)
+            )
+        vmax = max(finite_abs_max(*vector_grids), 1e-12)
+        state_fig = make_subplots(
+            rows=1,
+            cols=3,
+            subplot_titles=[
+                "Non-trivial spectral vector 1",
+                "Non-trivial spectral vector 2",
+                "Non-trivial spectral vector 3",
+            ],
+            horizontal_spacing=0.08,
         )
+        for column, (mean_grid, count_grid) in enumerate(
+            zip(vector_grids, vector_counts), start=1
+        ):
+            state_fig.add_trace(
+                heatmap_trace(
+                    mean_grid,
+                    count_grid,
+                    coloraxis="coloraxis",
+                    quantity_label=f"mean non-trivial spectral vector {column}",
+                ),
+                row=1,
+                col=column,
+            )
         apply_coloraxis(
             state_fig,
             coloraxis="coloraxis",
             colorscale=guppy,
             cmin=-vmax,
             cmax=vmax,
-            title="Mean spectral coordinate 1",
+            title="Mean non-trivial spectral vector",
         )
         style_state_figure(
-            state_fig, f"{label}: mean spectral coordinate 1, k={selected_k}"
+            state_fig,
+            f"{label}: first three non-trivial spectral embedding vectors, k={selected_k}",
         )
         save_plotly_figure(
             state_fig,
             directories["state_diagrams"]
-            / f"initial_mean_spec1_{set_name}_k{selected_k}",
+            / f"initial_mean_first_three_nontrivial_vectors_{set_name}_k{selected_k}",
             rows=1,
-            cols=1,
-            panel_width=650,
+            cols=3,
+            panel_width=470,
             panel_height=460,
         )
 
@@ -1224,7 +1275,8 @@ def save_detailed_scatters(
     matching: pd.DataFrame,
     selected_k: int,
     scatters_dir: Path,
-    gem: list[list[float | str]],
+    rainforest: list[list[float | str]],
+    shift_limits: tuple[float, float],
 ) -> None:
     logging.info("Generating detailed embedding scatter plots")
     matching = matching.set_index("all_feature_comp")
@@ -1270,40 +1322,55 @@ def save_detailed_scatters(
                 if feature_set == "all_features"
                 else " (sign aligned to full specification)"
             )
-            fig = px.scatter(
-                plot_df,
-                x="x",
-                y="y",
-                color="lambda_color",
-                color_continuous_scale=gem,
-                range_color=[0.0, 1.0],
-                labels={
-                    "x": f"Spec-{x_component}",
-                    "y": f"Spec-{y_component}",
-                    "lambda_color": "lambda",
-                },
-                hover_data=hover_columns,
-                title=(
-                    f"{title_feature_set}, k={selected_k}: Spec-{x_component} vs Spec-{y_component}"
-                    f"{alignment_note}, coloured by lambda"
+            for color_variable, color_column, color_range, colorbar_config in [
+                (
+                    "lambda",
+                    "lambda_color",
+                    [0.0, 1.0],
+                    lambda figure: configure_lambda_colorbar(figure),
                 ),
-                opacity=0.7,
-                render_mode="svg",
-            )
-            fig.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
-            fig.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
-            configure_lambda_colorbar(fig)
-            fig.update_xaxes(showgrid=False, zeroline=False)
-            fig.update_yaxes(showgrid=False, zeroline=False)
-            save_plotly_figure(
-                fig,
-                scatters_dir
-                / f"scatter_{feature_set}_k{selected_k}_spec{x_component}_vs_spec{y_component}_lambda",
-                rows=1,
-                cols=1,
-                panel_width=850,
-                panel_height=620,
-            )
+                (
+                    "shift",
+                    "shift",
+                    list(shift_limits),
+                    lambda figure: configure_shift_colorbar(figure, *shift_limits),
+                ),
+            ]:
+                fig = px.scatter(
+                    plot_df,
+                    x="x",
+                    y="y",
+                    color=color_column,
+                    color_continuous_scale=rainforest,
+                    range_color=color_range,
+                    labels={
+                        "x": f"Spec-{x_component}",
+                        "y": f"Spec-{y_component}",
+                        "lambda_color": "lambda",
+                        "shift": "shift",
+                    },
+                    hover_data=hover_columns,
+                    title=(
+                        f"{title_feature_set}, k={selected_k}: Spec-{x_component} vs Spec-{y_component}"
+                        f"{alignment_note}, coloured by {color_variable}"
+                    ),
+                    opacity=EMBEDDING_MARKER_OPACITY,
+                    render_mode="svg",
+                )
+                fig.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
+                fig.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
+                colorbar_config(fig)
+                fig.update_xaxes(showgrid=False, zeroline=False)
+                fig.update_yaxes(showgrid=False, zeroline=False)
+                save_plotly_figure(
+                    fig,
+                    scatters_dir
+                    / f"scatter_{feature_set}_k{selected_k}_spec{x_component}_vs_spec{y_component}_{color_variable}",
+                    rows=1,
+                    cols=1,
+                    panel_width=850,
+                    panel_height=620,
+                )
 
 
 def write_data_outputs(
@@ -1396,7 +1463,7 @@ def main() -> None:
     logging.info("Main output directory: %s", results_dir.resolve())
 
     guppy = matplotlib_cmap_to_plotly(cmr.guppy_r)
-    gem = matplotlib_cmap_to_plotly(cmr.gem)
+    rainforest = matplotlib_cmap_to_plotly(cmr.rainforest)
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
         sample_metadata.loc[
@@ -1405,6 +1472,10 @@ def main() -> None:
         ].unique()
     )
     state_shifts = np.sort(sample_metadata["shift"].unique())
+    shift_limits = (
+        float(sample_metadata["shift"].min()),
+        float(sample_metadata["shift"].max()),
+    )
     if not len(state_lambdas) or not len(state_shifts):
         raise ValueError(
             "No state points are available within the configured lambda plotting range."
@@ -1420,7 +1491,8 @@ def main() -> None:
         state_shifts,
         directories,
         guppy,
-        gem,
+        rainforest,
+        shift_limits,
     )
 
     matrices = {}
@@ -1464,7 +1536,8 @@ def main() -> None:
         matching,
         args.k,
         directories["scatters"],
-        gem,
+        rainforest,
+        shift_limits,
     )
     summary = write_data_outputs(
         directories,
