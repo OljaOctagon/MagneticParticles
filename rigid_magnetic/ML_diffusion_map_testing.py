@@ -40,6 +40,9 @@ N_MATCHED_COMPONENTS = 3
 DEFAULT_GRAPH_K_VALUES = (5, 10, 20, 32, 50)
 STATE_LAMBDA_MIN = 0.0
 STATE_LAMBDA_MAX = 30.0
+LAMBDA_COLOR_GAMMA = 0.5
+LAMBDA_COLOR_VMIN = 0.0
+LAMBDA_COLOR_VMAX = 30.0
 SHIFT_MIN, SHIFT_MAX = 0.0, 0.7
 TICK_FONT = 14
 TITLE_FONT = 16
@@ -169,6 +172,28 @@ def matplotlib_cmap_to_plotly(cmap, n_colors: int = 256) -> list[list[float | st
             cmap(np.linspace(0.0, 1.0, n_colors))
         )
     ]
+
+
+def nonlinear_lambda_colors(lambda_values: pd.Series | np.ndarray) -> np.ndarray:
+    """Apply the shared power-law lambda color normalization, saturating above 30."""
+    clipped = np.clip(
+        np.asarray(lambda_values, dtype=float), LAMBDA_COLOR_VMIN, LAMBDA_COLOR_VMAX
+    )
+    return ((clipped - LAMBDA_COLOR_VMIN) / (LAMBDA_COLOR_VMAX - LAMBDA_COLOR_VMIN)) ** LAMBDA_COLOR_GAMMA
+
+
+def configure_lambda_colorbar(fig: go.Figure) -> None:
+    """Display original lambda units for the transformed Plotly color values."""
+    tick_values = np.array([0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
+    fig.update_coloraxes(
+        cmin=LAMBDA_COLOR_VMIN,
+        cmax=1.0,
+        colorbar=dict(
+            title="lambda",
+            tickvals=nonlinear_lambda_colors(tick_values),
+            ticktext=[f"{value:g}" for value in tick_values],
+        ),
+    )
 
 
 def save_plotly_figure(
@@ -429,7 +454,7 @@ def build_initial_embedding_plots(
     state_shifts: np.ndarray,
     directories: dict[str, Path],
     guppy: list[list[float | str]],
-    rainforest: list[list[float | str]],
+    gem: list[list[float | str]],
 ) -> None:
     logging.info(
         "Computing exploratory 2D spectral embeddings for %d feature specifications",
@@ -451,16 +476,18 @@ def build_initial_embedding_plots(
         scatter_df["embedding_1"] = embedding[:, 0]
         scatter_df["embedding_2"] = embedding[:, 1]
         scatter_df["selected_k"] = selected_k
+        scatter_df["lambda_color"] = nonlinear_lambda_colors(scatter_df["lambda"])
         scatter = px.scatter(
             scatter_df,
             x="embedding_1",
             y="embedding_2",
-            color="lambda",
-            color_continuous_scale=rainforest,
-            range_color=[STATE_LAMBDA_MIN, STATE_LAMBDA_MAX],
+            color="lambda_color",
+            color_continuous_scale=gem,
+            range_color=[0.0, 1.0],
             hover_data={
                 "file_id": True,
                 "lambda": ":.5g",
+                "lambda_color": False,
                 "shift": ":.5g",
                 "selected_k": True,
                 "embedding_1": ":.6g",
@@ -469,7 +496,7 @@ def build_initial_embedding_plots(
             labels={
                 "embedding_1": "Spectral coordinate 1",
                 "embedding_2": "Spectral coordinate 2",
-                "lambda": "lambda",
+                "lambda_color": "lambda",
             },
             title=f"{label}: 2D spectral embedding, k={selected_k}",
             render_mode="svg",
@@ -477,6 +504,7 @@ def build_initial_embedding_plots(
         )
         scatter.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
         scatter.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
+        configure_lambda_colorbar(scatter)
         scatter.update_xaxes(showgrid=False, zeroline=False)
         scatter.update_yaxes(showgrid=False, zeroline=False)
         save_plotly_figure(
@@ -1196,7 +1224,7 @@ def save_detailed_scatters(
     matching: pd.DataFrame,
     selected_k: int,
     scatters_dir: Path,
-    rainforest: list[list[float | str]],
+    gem: list[list[float | str]],
 ) -> None:
     logging.info("Generating detailed embedding scatter plots")
     matching = matching.set_index("all_feature_comp")
@@ -1216,12 +1244,14 @@ def save_detailed_scatters(
             plot_df["x"] = x_sign * embedding[:, x_component - 1]
             plot_df["y"] = y_sign * embedding[:, y_component - 1]
             plot_df["selected_k"] = selected_k
+            plot_df["lambda_color"] = nonlinear_lambda_colors(plot_df["lambda"])
             for descriptor in GLOBAL_DESCRIPTOR_COLS:
                 if descriptor in df.columns:
                     plot_df[descriptor] = df[descriptor].to_numpy()
             hover_columns = {
                 "file_id": True,
                 "lambda": ":.5g",
+                "lambda_color": False,
                 "shift": ":.5g",
                 "selected_k": True,
                 "x": ":.6g",
@@ -1244,13 +1274,13 @@ def save_detailed_scatters(
                 plot_df,
                 x="x",
                 y="y",
-                color="lambda",
-                color_continuous_scale=rainforest,
-                range_color=[STATE_LAMBDA_MIN, STATE_LAMBDA_MAX],
+                color="lambda_color",
+                color_continuous_scale=gem,
+                range_color=[0.0, 1.0],
                 labels={
                     "x": f"Spec-{x_component}",
                     "y": f"Spec-{y_component}",
-                    "lambda": "lambda",
+                    "lambda_color": "lambda",
                 },
                 hover_data=hover_columns,
                 title=(
@@ -1262,6 +1292,7 @@ def save_detailed_scatters(
             )
             fig.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
             fig.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
+            configure_lambda_colorbar(fig)
             fig.update_xaxes(showgrid=False, zeroline=False)
             fig.update_yaxes(showgrid=False, zeroline=False)
             save_plotly_figure(
@@ -1365,7 +1396,7 @@ def main() -> None:
     logging.info("Main output directory: %s", results_dir.resolve())
 
     guppy = matplotlib_cmap_to_plotly(cmr.guppy_r)
-    rainforest = matplotlib_cmap_to_plotly(cmr.rainforest)
+    gem = matplotlib_cmap_to_plotly(cmr.gem)
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
         sample_metadata.loc[
@@ -1389,7 +1420,7 @@ def main() -> None:
         state_shifts,
         directories,
         guppy,
-        rainforest,
+        gem,
     )
 
     matrices = {}
@@ -1433,7 +1464,7 @@ def main() -> None:
         matching,
         args.k,
         directories["scatters"],
-        rainforest,
+        gem,
     )
     summary = write_data_outputs(
         directories,
