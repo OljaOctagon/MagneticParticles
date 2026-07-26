@@ -398,7 +398,7 @@ def heatmap_trace(
         coloraxis=coloraxis,
         hoverongaps=False,
         hovertemplate=(
-            "shift=%{x}<br>lambda=%{y}<br>"
+            "shift=%{x}<br>λ*=%{y}<br>"
             f"{quantity_label}=%{{z:.5g}}<br>contributing samples=%{{customdata[0]:.0f}}<extra></extra>"
         ),
     )
@@ -439,7 +439,7 @@ def style_state_figure(fig: go.Figure, title: str) -> go.Figure:
         title_font=dict(size=TITLE_FONT),
     )
     fig.update_yaxes(
-        title_text="lambda",
+        title_text="λ*",
         tickfont=dict(size=TICK_FONT),
         title_font=dict(size=TITLE_FONT),
     )
@@ -462,7 +462,7 @@ def build_initial_embedding_plots(
     state_lambdas: np.ndarray,
     state_shifts: np.ndarray,
     directories: dict[str, Path],
-    guppy: list[list[float | str]],
+    fusion: list[list[float | str]],
     rainforest: list[list[float | str]],
     shift_limits: tuple[float, float],
 ) -> None:
@@ -581,7 +581,7 @@ def build_initial_embedding_plots(
         apply_coloraxis(
             state_fig,
             coloraxis="coloraxis",
-            colorscale=guppy,
+            colorscale=fusion,
             cmin=-vmax,
             cmax=vmax,
             title="Mean non-trivial spectral vector",
@@ -596,8 +596,8 @@ def build_initial_embedding_plots(
             / f"initial_mean_first_three_nontrivial_vectors_{set_name}_k{selected_k}",
             rows=1,
             cols=3,
-            panel_width=470,
-            panel_height=460,
+            panel_width=560,
+            panel_height=300,
         )
 
 
@@ -816,7 +816,7 @@ def create_state_diagrams(
     state_lambdas: np.ndarray,
     state_shifts: np.ndarray,
     directories: dict[str, Path],
-    guppy: list[list[float | str]],
+    fusion: list[list[float | str]],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     logging.info("Generating state diagrams for k=%d", selected_k)
     full_embedding = embeddings[("all_features", selected_k)]
@@ -948,7 +948,7 @@ def create_state_diagrams(
         apply_coloraxis(
             individual_full,
             coloraxis="coloraxis",
-            colorscale=guppy,
+            colorscale=fusion,
             cmin=-mean_vmax,
             cmax=mean_vmax,
             title="Mean spectral coordinate",
@@ -977,7 +977,7 @@ def create_state_diagrams(
         apply_coloraxis(
             individual_reduced,
             coloraxis="coloraxis",
-            colorscale=guppy,
+            colorscale=fusion,
             cmin=-mean_vmax,
             cmax=mean_vmax,
             title="Mean spectral coordinate",
@@ -999,7 +999,7 @@ def create_state_diagrams(
     apply_coloraxis(
         mean_fig,
         coloraxis="coloraxis",
-        colorscale=guppy,
+        colorscale=fusion,
         cmin=-mean_vmax,
         cmax=mean_vmax,
         title="Mean spectral coordinate",
@@ -1076,7 +1076,7 @@ def create_state_diagrams(
     apply_coloraxis(
         std_fig,
         coloraxis="coloraxis",
-        colorscale=guppy,
+        colorscale="Viridis",
         cmin=0,
         cmax=std_vmax,
         title="Within-state sample standard deviation",
@@ -1154,7 +1154,7 @@ def create_state_diagrams(
     apply_coloraxis(
         difference_fig,
         coloraxis="coloraxis",
-        colorscale=guppy,
+        colorscale=fusion,
         cmin=-difference_vmax,
         cmax=difference_vmax,
         title="Mean delta z",
@@ -1187,7 +1187,7 @@ def create_state_diagrams(
     apply_coloraxis(
         count_fig,
         coloraxis="coloraxis",
-        colorscale=guppy,
+        colorscale="YlOrRd",
         cmin=0,
         cmax=max(finite_max(count_grid), 1.0),
         title="Configurations",
@@ -1462,7 +1462,7 @@ def main() -> None:
     logging.info("Selected k: %d", args.k)
     logging.info("Main output directory: %s", results_dir.resolve())
 
-    guppy = matplotlib_cmap_to_plotly(cmr.guppy_r)
+    fusion = matplotlib_cmap_to_plotly(cmr.fusion)
     rainforest = matplotlib_cmap_to_plotly(cmr.rainforest)
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
@@ -1490,7 +1490,7 @@ def main() -> None:
         state_lambdas,
         state_shifts,
         directories,
-        guppy,
+        fusion,
         rainforest,
         shift_limits,
     )
@@ -1526,7 +1526,7 @@ def main() -> None:
         state_lambdas,
         state_shifts,
         directories,
-        guppy,
+        fusion,
     )
     comparison = create_embedding_comparison(embeddings, args.k)
     save_detailed_scatters(
