@@ -64,13 +64,20 @@ GLOBAL_DESCRIPTOR_COLS = [
     "largest",
     "mean_radius_of_gyration",
 ]
-FEATURE_GROUP_SIZES = {"global": 6, "orientation": 24, "Rg": 29, "gofr": 25}
+FEATURE_GROUP_SIZES = {
+    "global": 6,
+    "orientation": 24,
+    "Rg": 29,
+    "gofr": 25,
+    "crystallinity_features": 2,
+}
+CRYSTALLINITY_FEATURES = ["p_q4", "p_q6"]
 FEATURE_SET_GROUPS = {
-    "all_features": ["global", "orientation", "Rg", "gofr"],
+    "all_features": ["global", "orientation", "Rg", "gofr", "crystallinity_features"],
     "reduced_no_global": ["orientation", "gofr"],
 }
 EXPLORATORY_SET_GROUPS = {
-    "all_features": ["global", "orientation", "Rg", "gofr"],
+    "all_features": ["global", "orientation", "Rg", "gofr", "crystallinity_features"],
     "no_functions": ["global"],
     "no_orientation_Rg": ["global", "gofr"],
     "no_orientation_gofr": ["global", "Rg"],
@@ -105,8 +112,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-path",
         type=Path,
-        default=Path("results/MAG2P_order_parameters-2025-12-8-16:13:13.pickle"),
+        default=Path("results/MAG2P_order_parameters_with_p_q4_p_q6.pickle"),
         help="Input order-parameter pickle file.",
+    )
+    parser.add_argument(
+        "--exclude-crystallinity",
+        action="store_true",
+        help="Exclude p_q4 and p_q6, reproducing the previous 84-feature setup.",
     )
     args = parser.parse_args()
     if args.k <= 0:
@@ -137,14 +149,15 @@ def json_default(value: object):
 
 
 def create_run_directories(
-    data_path: Path, selected_k: int
+    data_path: Path, selected_k: int, include_crystallinity: bool
 ) -> tuple[Path, dict[str, Path], str]:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     safe_stem = "".join(
         character if character.isalnum() or character in "-_" else "_"
         for character in data_path.stem
     )
-    results_dir = Path("results") / f"{safe_stem}_{timestamp}_k{selected_k}"
+    crystallinity_label = "with_crystallinity" if include_crystallinity else "without_crystallinity"
+    results_dir = Path("results") / f"{safe_stem}_{timestamp}_k{selected_k}_{crystallinity_label}"
     try:
         results_dir.mkdir(parents=True, exist_ok=False)
     except FileExistsError as error:
@@ -242,8 +255,8 @@ def save_plotly_figure(
 
 
 def load_and_validate_data(
-    data_path: Path,
-) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+    data_path: Path, include_crystallinity: bool
+) -> tuple[pd.DataFrame, dict[str, list[str]], dict[str, object]]:
     if not data_path.is_file():
         raise FileNotFoundError(
             f"Input data file does not exist: {data_path}. Use --data-path to specify a valid pickle file."
@@ -266,6 +279,33 @@ def load_and_validate_data(
             f"{missing_dropped}"
         )
 
+    crystallinity_info: dict[str, object] = {
+        "included": include_crystallinity,
+        "columns": CRYSTALLINITY_FEATURES if include_crystallinity else [],
+        "missing_values_before_fill": {},
+        "handling": "excluded before preprocessing" if not include_crystallinity else "filled with 0 by the existing fillna(0) preprocessing",
+    }
+    if include_crystallinity:
+        missing_crystallinity = [
+            column for column in CRYSTALLINITY_FEATURES if column not in raw_df.columns
+        ]
+        if missing_crystallinity:
+            raise ValueError(
+                "Crystallinity features are enabled, but the input data is missing required columns: "
+                f"{missing_crystallinity}. Use --exclude-crystallinity for the previous feature setup."
+            )
+        crystallinity_info["missing_values_before_fill"] = {
+            column: int(raw_df[column].isna().sum()) for column in CRYSTALLINITY_FEATURES
+        }
+        logging.info(
+            "Crystallinity features enabled: %s; missing values filled by existing preprocessing: %s",
+            CRYSTALLINITY_FEATURES,
+            crystallinity_info["missing_values_before_fill"],
+        )
+    else:
+        raw_df = raw_df.drop(columns=CRYSTALLINITY_FEATURES, errors="ignore")
+        logging.info("Crystallinity features excluded before preprocessing: %s", CRYSTALLINITY_FEATURES)
+
     with pd.option_context("future.no_silent_downcasting", True):
         df = raw_df.fillna(0)
     df = df.infer_objects(copy=False).drop(columns=DROP_COLUMNS)
@@ -282,23 +322,36 @@ def load_and_validate_data(
         )
 
     expected_feature_count = sum(FEATURE_GROUP_SIZES.values())
+    if not include_crystallinity:
+        expected_feature_count -= FEATURE_GROUP_SIZES["crystallinity_features"]
     actual_feature_count = len(df.columns) - len(META_COLUMNS)
     if actual_feature_count != expected_feature_count:
         raise ValueError(
-            "Expected 84 processed feature columns split into global=6, orientation=24, "
-            f"Rg=29, and gofr=25; found {actual_feature_count}."
+            f"Expected {expected_feature_count} processed feature columns; found {actual_feature_count}. "
+            "The base groups are global=6, orientation=24, Rg=29, and gofr=25, "
+            "with crystallinity_features=2 when enabled."
         )
 
     feature_groups = {
         "global": list(df.columns[3:9]),
         "orientation": list(df.columns[9:33]),
         "Rg": list(df.columns[33:62]),
-        "gofr": list(df.columns[62:]),
+        "gofr": list(df.columns[62:87]),
+        "crystallinity_features": CRYSTALLINITY_FEATURES if include_crystallinity else [],
     }
+    if include_crystallinity:
+        missing_processed_crystallinity = [
+            column for column in CRYSTALLINITY_FEATURES if column not in df.columns
+        ]
+        if missing_processed_crystallinity:
+            raise ValueError(
+                "Crystallinity features were removed during preprocessing because they are absent or all zero: "
+                f"{missing_processed_crystallinity}"
+            )
     invalid_groups = {
         name: len(columns)
         for name, columns in feature_groups.items()
-        if len(columns) != FEATURE_GROUP_SIZES[name]
+        if len(columns) != (FEATURE_GROUP_SIZES[name] if include_crystallinity or name != "crystallinity_features" else 0)
     }
     if invalid_groups:
         raise ValueError(f"Feature-group validation failed: {invalid_groups}")
@@ -328,7 +381,7 @@ def load_and_validate_data(
         "Feature groups: %s",
         {name: len(columns) for name, columns in feature_groups.items()},
     )
-    return df, feature_groups
+    return df, feature_groups, crystallinity_info
 
 
 def feature_columns_for_groups(
@@ -1381,6 +1434,8 @@ def write_data_outputs(
     timestamp: str,
     row_count: int,
     feature_columns: dict[str, list[str]],
+    feature_group_sizes: dict[str, int],
+    crystallinity_info: dict[str, object],
     matching: pd.DataFrame,
     connectivity: pd.DataFrame,
     spectrum: pd.DataFrame,
@@ -1410,6 +1465,7 @@ def write_data_outputs(
             {
                 "feature_set": feature_set,
                 "k": selected_k,
+                "crystallinity_included": bool(crystallinity_info["included"]),
                 "n_graph_components": connection.n_components,
                 "fraction_largest": connection.fraction_in_largest,
                 "matched_abs_pearson_mean": matching.abs_pearson.mean()
@@ -1430,6 +1486,11 @@ def write_data_outputs(
         "n_configurations": row_count,
         "state_lambda_plot_limits": [STATE_LAMBDA_MIN, STATE_LAMBDA_MAX],
         "feature_columns": feature_columns,
+        "feature_group_sizes": feature_group_sizes,
+        "crystallinity_features": crystallinity_info,
+        "feature_specifications_with_crystallinity": ["all_features"]
+        if crystallinity_info["included"]
+        else [],
         "state_point_sample_counts": sorted(
             int(count) for count in count_data["count"].unique()
         ),
@@ -1451,15 +1512,21 @@ def main() -> None:
 
     input_path = args.data_path.expanduser().resolve()
     script_dir = Path(__file__).resolve().parent
-    df, feature_groups = load_and_validate_data(input_path)
+    include_crystallinity = not args.exclude_crystallinity
+    df, feature_groups, crystallinity_info = load_and_validate_data(
+        input_path, include_crystallinity
+    )
     if args.k >= len(df):
         raise ValueError(
             f"--k must be smaller than the number of configurations ({len(df)}); got {args.k}."
         )
 
-    results_dir, directories, timestamp = create_run_directories(input_path, args.k)
+    results_dir, directories, timestamp = create_run_directories(
+        input_path, args.k, include_crystallinity
+    )
     logging.info("Resolved input path: %s", input_path)
     logging.info("Selected k: %d", args.k)
+    logging.info("Crystallinity features included: %s", include_crystallinity)
     logging.info("Main output directory: %s", results_dir.resolve())
 
     fusion = matplotlib_cmap_to_plotly(cmr.fusion)
@@ -1547,6 +1614,8 @@ def main() -> None:
         timestamp,
         len(df),
         feature_columns,
+        {name: len(columns) for name, columns in feature_groups.items()},
+        crystallinity_info,
         matching,
         connectivity,
         spectrum,
