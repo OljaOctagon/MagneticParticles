@@ -31,6 +31,18 @@ from sklearn.manifold import SpectralEmbedding
 from sklearn.neighbors import NearestNeighbors, kneighbors_graph
 from sklearn.preprocessing import StandardScaler
 
+from feature_schema import (
+    CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES as SCHEMA_COARSE_HISTOGRAM_FEATURES,
+    CRYSTALLINITY_SCALARS as SCHEMA_CRYSTALLINITY_SCALARS,
+    DIAGNOSTIC_FEATURES,
+    FEATURE_GROUPS as SCHEMA_FEATURE_GROUPS,
+    GLOBAL_FEATURES as SCHEMA_GLOBAL_FEATURES,
+    GLOBAL_STD_FEATURES,
+    META_COLUMNS as SCHEMA_META_COLUMNS,
+    Q4_HISTOGRAM_FEATURES as SCHEMA_Q4_HISTOGRAM_FEATURES,
+    Q6_HISTOGRAM_FEATURES as SCHEMA_Q6_HISTOGRAM_FEATURES,
+)
+
 
 SCRIPT_VERSION = "1.0.0"
 SEED = 42
@@ -48,22 +60,9 @@ TITLE_FONT = 16
 EMBEDDING_MARKER_SIZE = 4
 EMBEDDING_MARKER_OPACITY = 0.65
 MISSING_CELL_COLOR = "#bdbdbd"
-META_COLUMNS = ["file_id", "lambda", "shift"]
-DROP_COLUMNS = [
-    "std_bonds_1_8",
-    "std_bonds_1_5",
-    "std_size",
-    "std_radius_of_gyration",
-    "std_second_neighbours",
-]
-GLOBAL_DESCRIPTOR_COLS = [
-    "mean_bonds_1_8",
-    "mean_bonds_1_5",
-    "mean_second_neighbours",
-    "mean_size",
-    "largest",
-    "mean_radius_of_gyration",
-]
+META_COLUMNS = SCHEMA_META_COLUMNS
+DROP_COLUMNS = [*GLOBAL_STD_FEATURES, *DIAGNOSTIC_FEATURES]
+GLOBAL_DESCRIPTOR_COLS = SCHEMA_GLOBAL_FEATURES
 FEATURE_GROUP_SIZES = {
     "global": 6,
     "orientation": 24,
@@ -72,10 +71,10 @@ FEATURE_GROUP_SIZES = {
     "crystallinity_scalar_features": 2,
     "crystallinity_coarse_histogram_features": 20,
 }
-CRYSTALLINITY_SCALAR_FEATURES = ["p_q4", "p_q6"]
-Q4_COARSE_HISTOGRAM_FEATURES = [f"q4_hist_{start:02d}_{start + 10:02d}" for start in range(0, 100, 10)]
-Q6_COARSE_HISTOGRAM_FEATURES = [f"q6_hist_{start:02d}_{start + 10:02d}" for start in range(0, 100, 10)]
-CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES = Q4_COARSE_HISTOGRAM_FEATURES + Q6_COARSE_HISTOGRAM_FEATURES
+CRYSTALLINITY_SCALAR_FEATURES = SCHEMA_CRYSTALLINITY_SCALARS
+Q4_COARSE_HISTOGRAM_FEATURES = SCHEMA_Q4_HISTOGRAM_FEATURES
+Q6_COARSE_HISTOGRAM_FEATURES = SCHEMA_Q6_HISTOGRAM_FEATURES
+CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES = SCHEMA_COARSE_HISTOGRAM_FEATURES
 ALL_CRYSTALLINITY_FEATURES = CRYSTALLINITY_SCALAR_FEATURES + CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES
 BASE_FEATURE_SET_GROUPS = {
     "all_features": ["global", "orientation", "Rg", "gofr"],
@@ -299,27 +298,25 @@ def load_and_validate_data(
     missing_metadata = [
         column for column in META_COLUMNS if column not in raw_df.columns
     ]
-    missing_dropped = [
-        column for column in DROP_COLUMNS if column not in raw_df.columns
-    ]
     if missing_metadata:
         raise ValueError(
             f"Input data is missing required metadata columns: {missing_metadata}"
-        )
-    if missing_dropped:
-        raise ValueError(
-            "Input data is missing expected descriptor columns required by the current feature schema: "
-            f"{missing_dropped}"
         )
 
     active_groups = active_crystallinity_groups(crystallinity_mode)
     active_columns = [column for columns in active_groups.values() for column in columns]
     inactive_columns = [column for column in ALL_CRYSTALLINITY_FEATURES if column not in active_columns]
-    missing_crystallinity = [column for column in active_columns if column not in raw_df.columns]
-    if missing_crystallinity:
+    base_model_columns = [
+        *SCHEMA_FEATURE_GROUPS["global"],
+        *SCHEMA_FEATURE_GROUPS["orientation"],
+        *SCHEMA_FEATURE_GROUPS["Rg"],
+        *SCHEMA_FEATURE_GROUPS["gofr"],
+    ]
+    missing_model_columns = [column for column in [*base_model_columns, *active_columns] if column not in raw_df.columns]
+    if missing_model_columns:
         raise ValueError(
-            f"Crystallinity mode '{crystallinity_mode}' requires columns missing from the input data: "
-            f"{missing_crystallinity}"
+            f"Input data is missing named model columns required by crystallinity mode '{crystallinity_mode}': "
+            f"{missing_model_columns}"
         )
     crystallinity_info: dict[str, object] = {
         "mode": crystallinity_mode,
@@ -337,36 +334,21 @@ def load_and_validate_data(
         active_columns,
         crystallinity_info["missing_values_before_fill"],
     )
-    raw_df = raw_df.drop(columns=inactive_columns, errors="ignore")
+    raw_df = raw_df.drop(columns=[*inactive_columns, *DROP_COLUMNS], errors="ignore")
 
     with pd.option_context("future.no_silent_downcasting", True):
         df = raw_df.fillna(0)
-    df = df.infer_objects(copy=False).drop(columns=DROP_COLUMNS)
-    df = df.loc[:, (df != 0).any(axis=0)]
-    if list(df.columns[:3]) != META_COLUMNS:
-        raise ValueError(
-            "The current feature schema requires the first three processed columns to be "
-            f"{META_COLUMNS}, got {list(df.columns[:3])}."
-        )
-    if list(df.columns[3:9]) != GLOBAL_DESCRIPTOR_COLS:
-        raise ValueError(
-            "The processed global descriptor block does not match the expected six columns: "
-            f"{GLOBAL_DESCRIPTOR_COLS}."
-        )
-
-    expected_feature_count = 84 + len(active_columns)
-    actual_feature_count = len(df.columns) - len(META_COLUMNS)
-    if actual_feature_count != expected_feature_count:
-        raise ValueError(
-            f"Expected {expected_feature_count} processed feature columns; found {actual_feature_count}. "
-            "The base groups are global=6, orientation=24, Rg=29, and gofr=25."
-        )
+    df = df.infer_objects(copy=False)
+    # Retain zero-only schema features so all named groups remain stable across limited runs.
+    schema_columns = set([*META_COLUMNS, *base_model_columns, *active_columns])
+    zero_only_non_schema = [column for column in df.columns if column not in schema_columns and not (df[column] != 0).any()]
+    df = df.drop(columns=zero_only_non_schema)
 
     feature_groups = {
-        "global": list(df.columns[3:9]),
-        "orientation": list(df.columns[9:33]),
-        "Rg": list(df.columns[33:62]),
-        "gofr": list(df.columns[62:87]),
+        "global": list(SCHEMA_FEATURE_GROUPS["global"]),
+        "orientation": list(SCHEMA_FEATURE_GROUPS["orientation"]),
+        "Rg": list(SCHEMA_FEATURE_GROUPS["Rg"]),
+        "gofr": list(SCHEMA_FEATURE_GROUPS["gofr"]),
         "crystallinity_scalar_features": active_groups["crystallinity_scalar_features"],
         "q4_coarse_histogram_features": Q4_COARSE_HISTOGRAM_FEATURES
         if active_groups["crystallinity_coarse_histogram_features"]
@@ -376,11 +358,10 @@ def load_and_validate_data(
         else [],
         "crystallinity_coarse_histogram_features": active_groups["crystallinity_coarse_histogram_features"],
     }
-    missing_processed_crystallinity = [column for column in active_columns if column not in df.columns]
-    if missing_processed_crystallinity:
+    missing_processed_model_columns = [column for column in [*base_model_columns, *active_columns] if column not in df.columns]
+    if missing_processed_model_columns:
         raise ValueError(
-            "Active crystallinity features were removed during preprocessing because they are absent or all zero: "
-            f"{missing_processed_crystallinity}"
+            f"Named model columns are unavailable after preprocessing: {missing_processed_model_columns}"
         )
     invalid_groups = {
         name: len(columns)
@@ -390,13 +371,7 @@ def load_and_validate_data(
     if invalid_groups:
         raise ValueError(f"Feature-group validation failed: {invalid_groups}")
 
-    feature_columns = [
-        *feature_groups["global"],
-        *feature_groups["orientation"],
-        *feature_groups["Rg"],
-        *feature_groups["gofr"],
-        *active_columns,
-    ]
+    feature_columns = [*base_model_columns, *active_columns]
     non_numeric = [
         column
         for column in feature_columns
@@ -556,7 +531,7 @@ def build_initial_embedding_plots(
     state_lambdas: np.ndarray,
     state_shifts: np.ndarray,
     directories: dict[str, Path],
-    fusion: list[list[float | str]],
+    pride: list[list[float | str]],
     rainforest: list[list[float | str]],
     shift_limits: tuple[float, float],
 ) -> None:
@@ -675,7 +650,7 @@ def build_initial_embedding_plots(
         apply_coloraxis(
             state_fig,
             coloraxis="coloraxis",
-            colorscale=fusion,
+            colorscale=pride,
             cmin=-vmax,
             cmax=vmax,
             title="Mean non-trivial spectral vector",
@@ -910,7 +885,7 @@ def create_state_diagrams(
     state_lambdas: np.ndarray,
     state_shifts: np.ndarray,
     directories: dict[str, Path],
-    fusion: list[list[float | str]],
+    pride: list[list[float | str]],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     logging.info("Generating state diagrams for k=%d", selected_k)
     full_embedding = embeddings[("all_features", selected_k)]
@@ -1042,7 +1017,7 @@ def create_state_diagrams(
         apply_coloraxis(
             individual_full,
             coloraxis="coloraxis",
-            colorscale=fusion,
+            colorscale=pride,
             cmin=-mean_vmax,
             cmax=mean_vmax,
             title="Mean spectral coordinate",
@@ -1071,7 +1046,7 @@ def create_state_diagrams(
         apply_coloraxis(
             individual_reduced,
             coloraxis="coloraxis",
-            colorscale=fusion,
+            colorscale=pride,
             cmin=-mean_vmax,
             cmax=mean_vmax,
             title="Mean spectral coordinate",
@@ -1093,7 +1068,7 @@ def create_state_diagrams(
     apply_coloraxis(
         mean_fig,
         coloraxis="coloraxis",
-        colorscale=fusion,
+        colorscale=pride,
         cmin=-mean_vmax,
         cmax=mean_vmax,
         title="Mean spectral coordinate",
@@ -1248,7 +1223,7 @@ def create_state_diagrams(
     apply_coloraxis(
         difference_fig,
         coloraxis="coloraxis",
-        colorscale=fusion,
+        colorscale=pride,
         cmin=-difference_vmax,
         cmax=difference_vmax,
         title="Mean delta z",
@@ -1574,7 +1549,7 @@ def main() -> None:
     logging.info("Crystallinity mode: %s", crystallinity_mode)
     logging.info("Main output directory: %s", results_dir.resolve())
 
-    fusion = matplotlib_cmap_to_plotly(cmr.fusion)
+    pride = matplotlib_cmap_to_plotly(cmr.pride)
     rainforest = matplotlib_cmap_to_plotly(cmr.rainforest)
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
@@ -1603,7 +1578,7 @@ def main() -> None:
         state_lambdas,
         state_shifts,
         directories,
-        fusion,
+        pride,
         rainforest,
         shift_limits,
     )
@@ -1639,7 +1614,7 @@ def main() -> None:
         state_lambdas,
         state_shifts,
         directories,
-        fusion,
+        pride,
     )
     comparison = create_embedding_comparison(embeddings, args.k)
     save_detailed_scatters(
