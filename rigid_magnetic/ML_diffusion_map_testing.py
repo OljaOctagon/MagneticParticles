@@ -52,7 +52,8 @@ N_MATCHED_COMPONENTS = 3
 DEFAULT_GRAPH_K_VALUES = (5, 10, 20, 32, 50)
 STATE_LAMBDA_MIN = 0.0
 STATE_LAMBDA_MAX = 30.0
-LAMBDA_COLOR_GAMMA = 0.5
+# Lower gamma expands low-λ color differences without compressing the upper range excessively.
+LAMBDA_COLOR_GAMMA = 0.35
 LAMBDA_COLOR_VMIN = 0.0
 LAMBDA_COLOR_VMAX = 30.0
 TICK_FONT = 14
@@ -220,7 +221,7 @@ def matplotlib_cmap_to_plotly(cmap, n_colors: int = 256) -> list[list[float | st
 
 
 def nonlinear_lambda_colors(lambda_values: pd.Series | np.ndarray) -> np.ndarray:
-    """Apply the shared power-law lambda color normalization, saturating above 30."""
+    """Apply the shared power-law λ color normalization, saturating above 30."""
     clipped = np.clip(
         np.asarray(lambda_values, dtype=float), LAMBDA_COLOR_VMIN, LAMBDA_COLOR_VMAX
     )
@@ -228,13 +229,13 @@ def nonlinear_lambda_colors(lambda_values: pd.Series | np.ndarray) -> np.ndarray
 
 
 def configure_lambda_colorbar(fig: go.Figure) -> None:
-    """Display original lambda units for the transformed Plotly color values."""
+    """Display original λ units for the transformed Plotly color values."""
     tick_values = np.array([0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
     fig.update_coloraxes(
         cmin=LAMBDA_COLOR_VMIN,
         cmax=1.0,
         colorbar=dict(
-            title="lambda",
+            title="λ",
             tickvals=nonlinear_lambda_colors(tick_values),
             ticktext=[f"{value:g}" for value in tick_values],
         ),
@@ -503,7 +504,7 @@ def heatmap_trace(
         coloraxis=coloraxis,
         hoverongaps=False,
         hovertemplate=(
-            "shift=%{x}<br>λ*=%{y}<br>"
+            "shift=%{x}<br>λ=%{y}<br>"
             f"{quantity_label}=%{{z:.5g}}<br>contributing samples=%{{customdata[0]:.0f}}<extra></extra>"
         ),
     )
@@ -517,31 +518,61 @@ def apply_coloraxis(
     cmin: float,
     cmax: float,
     title: str,
+    cmid: float | None = None,
     colorbar_x: float = 1.02,
+    colorbar_y: float = 0.5,
+    colorbar_len: float = 0.78,
     tickvals: list[float] | None = None,
     ticktext: list[str] | None = None,
 ) -> None:
     fig.update_layout(
         **{
-            coloraxis: dict(
-                colorscale=colorscale,
-                cmin=cmin,
-                cmax=cmax,
-                colorbar=dict(
+            coloraxis: {
+                "colorscale": colorscale,
+                "cmin": cmin,
+                "cmax": cmax,
+                **({"cmid": cmid} if cmid is not None else {}),
+                "colorbar": dict(
                     title=dict(text=title, side="right"),
                     thickness=12,
-                    len=0.78,
+                    len=colorbar_len,
                     x=colorbar_x,
                     xanchor="left",
                     xpad=0,
-                    y=0.5,
+                    y=colorbar_y,
                     tickfont=dict(size=11),
                     tickvals=tickvals,
                     ticktext=ticktext,
                 ),
-            )
+            }
         }
     )
+
+
+def symmetric_limits(*grids: pd.DataFrame) -> tuple[float, float, float]:
+    limit = max(finite_abs_max(*grids), 1e-12)
+    return -limit, limit, limit
+
+
+def symmetric_ticks(limit: float) -> tuple[list[float], list[str]]:
+    values = [-limit, 0.0, limit]
+    return values, [f"{value:.3g}" for value in values]
+
+
+def subplot_axis_domain(
+    fig: go.Figure, *, row: int, col: int, ncols: int
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    index = (row - 1) * ncols + col
+    xaxis_name = "xaxis" if index == 1 else f"xaxis{index}"
+    yaxis_name = "yaxis" if index == 1 else f"yaxis{index}"
+    return (
+        tuple(getattr(fig.layout, xaxis_name).domain),
+        tuple(getattr(fig.layout, yaxis_name).domain),
+    )
+
+
+def coloraxis_name(index: int) -> str:
+    return "coloraxis" if index == 1 else f"coloraxis{index}"
 
 
 def style_state_figure(fig: go.Figure, title: str) -> go.Figure:
@@ -551,7 +582,7 @@ def style_state_figure(fig: go.Figure, title: str) -> go.Figure:
         title_font=dict(size=TITLE_FONT),
     )
     fig.update_yaxes(
-        title_text="λ*",
+        title_text="λ",
         tickfont=dict(size=TICK_FONT),
         title_font=dict(size=TITLE_FONT),
     )
@@ -576,7 +607,7 @@ def build_initial_embedding_plots(
     state_shifts: np.ndarray,
     directories: dict[str, Path],
     pride: list[list[float | str]],
-    rainforest: list[list[float | str]],
+    lilac: list[list[float | str]],
     shift_limits: tuple[float, float],
 ) -> None:
     logging.info(
@@ -601,18 +632,21 @@ def build_initial_embedding_plots(
         scatter_df["embedding_2"] = embedding[:, 1]
         scatter_df["selected_k"] = selected_k
         scatter_df["lambda_color"] = nonlinear_lambda_colors(scatter_df["lambda"])
-        for color_variable, color_column, colorscale, color_range, colorbar_config in [
+        scatter_df["lambda_hover"] = scatter_df["lambda"]
+        for color_key, color_label, color_column, colorscale, color_range, colorbar_config in [
             (
                 "lambda",
+                "λ",
                 "lambda_color",
-                rainforest,
+                lilac,
                 [0.0, 1.0],
                 lambda figure: configure_lambda_colorbar(figure),
             ),
             (
                 "shift",
                 "shift",
-                rainforest,
+                "shift",
+                lilac,
                 list(shift_limits),
                 lambda figure: configure_shift_colorbar(figure, *shift_limits),
             ),
@@ -626,8 +660,9 @@ def build_initial_embedding_plots(
                 range_color=color_range,
                 hover_data={
                     "file_id": True,
-                    "lambda": ":.5g",
+                    "lambda": False,
                     "lambda_color": False,
+                    "lambda_hover": ":.5g",
                     "shift": ":.5g",
                     "selected_k": True,
                     "embedding_1": ":.6g",
@@ -636,10 +671,11 @@ def build_initial_embedding_plots(
                 labels={
                     "embedding_1": "Spectral coordinate 1",
                     "embedding_2": "Spectral coordinate 2",
-                    "lambda_color": "lambda",
+                    "lambda": "λ",
+                    "lambda_hover": "λ",
                     "shift": "shift",
                 },
-                title=f"{label}: 2D spectral embedding, k={selected_k}, coloured by {color_variable}",
+                title=f"{label}: 2D spectral embedding, k={selected_k}, coloured by {color_label}",
                 render_mode="svg",
                 opacity=EMBEDDING_MARKER_OPACITY,
             )
@@ -650,7 +686,7 @@ def build_initial_embedding_plots(
             scatter.update_yaxes(showgrid=False, zeroline=False)
             save_plotly_figure(
                 scatter,
-                directories["scatters"] / f"initial_embedding_{set_name}_k{selected_k}_{color_variable}",
+                directories["scatters"] / f"initial_embedding_{set_name}_k{selected_k}_{color_key}",
                 rows=1,
                 cols=1,
                 panel_width=850,
@@ -677,13 +713,6 @@ def build_initial_embedding_plots(
             ],
             horizontal_spacing=0.08,
         )
-        vector_limits = []
-        for grid in vector_grids:
-            values = grid.to_numpy(dtype=float)
-            finite_values = values[np.isfinite(values)]
-            limit = float(np.max(np.abs(finite_values))) if finite_values.size else 1.0
-            vector_limits.append(max(limit, 1e-12))
-
         for column, (mean_grid, count_grid) in enumerate(
             zip(vector_grids, vector_counts), start=1
         ):
@@ -698,25 +727,31 @@ def build_initial_embedding_plots(
                 row=1,
                 col=column,
             )
-        for column, limit in enumerate(vector_limits, start=1):
+        for column, mean_grid in enumerate(vector_grids, start=1):
             coloraxis = "coloraxis" if column == 1 else f"coloraxis{column}"
-            ticks = [-limit, 0.0, limit]
-            axis_name = "xaxis" if column == 1 else f"xaxis{column}"
-            axis_domain = getattr(state_fig.layout, axis_name).domain
+            cmin, cmax, limit = symmetric_limits(mean_grid)
+            ticks, ticktext = symmetric_ticks(limit)
+            x_domain, y_domain = subplot_axis_domain(
+                state_fig, row=1, col=column, ncols=3
+            )
             apply_coloraxis(
                 state_fig,
                 coloraxis=coloraxis,
                 colorscale=pride,
-                cmin=-limit,
-                cmax=limit,
+                cmin=cmin,
+                cmax=cmax,
+                cmid=0.0,
                 title="Mean value",
-                colorbar_x=float(axis_domain[1]) + 0.006,
+                colorbar_x=x_domain[1] + 0.006,
+                colorbar_y=sum(y_domain) / 2,
+                colorbar_len=y_domain[1] - y_domain[0],
                 tickvals=ticks,
-                ticktext=[f"{tick:.3g}" for tick in ticks],
+                ticktext=ticktext,
             )
         style_state_figure(
             state_fig,
-            f"{label}: first three non-trivial spectral embedding vectors, k={selected_k}",
+            f"{label}: first three non-trivial spectral embedding vectors, k={selected_k}"
+            " (zero-centered diverging scales)",
         )
         save_plotly_figure(
             state_fig,
@@ -964,7 +999,6 @@ def create_state_diagrams(
     difference_rows: list[dict] = []
     count_rows: list[dict] = []
 
-    mean_grids = []
     mean_entries = []
     for component, row in selected.iterrows():
         reduced_component = int(row.reduced_comp) - 1
@@ -977,7 +1011,6 @@ def create_state_diagrams(
         reduced_grid = state_grid(reduced_table, "mean", state_lambdas, state_shifts)
         full_counts = state_grid(full_table, "count", state_lambdas, state_shifts)
         reduced_counts = state_grid(reduced_table, "count", state_lambdas, state_shifts)
-        mean_grids.extend([full_grid, reduced_grid])
         mean_entries.append(
             (
                 component,
@@ -990,8 +1023,6 @@ def create_state_diagrams(
                 reduced_counts,
             )
         )
-    mean_vmax = max(finite_abs_max(*mean_grids), 1e-12)
-
     mean_fig = make_subplots(
         rows=2,
         cols=N_MATCHED_COMPONENTS,
@@ -1019,7 +1050,7 @@ def create_state_diagrams(
             heatmap_trace(
                 full_grid,
                 full_counts,
-                coloraxis="coloraxis",
+                coloraxis=coloraxis_name(column),
                 quantity_label="mean spectral coordinate",
             ),
             row=1,
@@ -1029,7 +1060,7 @@ def create_state_diagrams(
             heatmap_trace(
                 reduced_grid,
                 reduced_counts,
-                coloraxis="coloraxis",
+                coloraxis=coloraxis_name(column + N_MATCHED_COMPONENTS),
                 quantity_label="mean spectral coordinate",
             ),
             row=2,
@@ -1073,13 +1104,41 @@ def create_state_diagrams(
                 quantity_label="mean spectral coordinate",
             )
         )
+        pair_cmin, pair_cmax, pair_limit = symmetric_limits(full_grid, reduced_grid)
+        ticks, ticktext = symmetric_ticks(pair_limit)
+        for row_index in (1, 2):
+            x_domain, y_domain = subplot_axis_domain(
+                mean_fig, row=row_index, col=column, ncols=N_MATCHED_COMPONENTS
+            )
+            apply_coloraxis(
+                mean_fig,
+                coloraxis=coloraxis_name(
+                    column if row_index == 1 else column + N_MATCHED_COMPONENTS
+                ),
+                colorscale=pride,
+                cmin=pair_cmin,
+                cmax=pair_cmax,
+                cmid=0.0,
+                title="Mean value",
+                colorbar_x=x_domain[1] + 0.006,
+                colorbar_y=sum(y_domain) / 2,
+                colorbar_len=y_domain[1] - y_domain[0],
+                tickvals=ticks,
+                ticktext=ticktext,
+            )
+
+        full_cmin, full_cmax, full_limit = symmetric_limits(full_grid)
+        full_ticks, full_ticktext = symmetric_ticks(full_limit)
         apply_coloraxis(
             individual_full,
             coloraxis="coloraxis",
             colorscale=pride,
-            cmin=-mean_vmax,
-            cmax=mean_vmax,
-            title="Mean spectral coordinate",
+            cmin=full_cmin,
+            cmax=full_cmax,
+            cmid=0.0,
+            title="Mean value",
+            tickvals=full_ticks,
+            ticktext=full_ticktext,
         )
         style_state_figure(
             individual_full,
@@ -1102,13 +1161,18 @@ def create_state_diagrams(
                 quantity_label="mean spectral coordinate",
             )
         )
+        reduced_cmin, reduced_cmax, reduced_limit = symmetric_limits(reduced_grid)
+        reduced_ticks, reduced_ticktext = symmetric_ticks(reduced_limit)
         apply_coloraxis(
             individual_reduced,
             coloraxis="coloraxis",
             colorscale=pride,
-            cmin=-mean_vmax,
-            cmax=mean_vmax,
-            title="Mean spectral coordinate",
+            cmin=reduced_cmin,
+            cmax=reduced_cmax,
+            cmid=0.0,
+            title="Mean value",
+            tickvals=reduced_ticks,
+            ticktext=reduced_ticktext,
         )
         style_state_figure(
             individual_reduced,
@@ -1124,17 +1188,10 @@ def create_state_diagrams(
             panel_height=450,
         )
 
-    apply_coloraxis(
-        mean_fig,
-        coloraxis="coloraxis",
-        colorscale=pride,
-        cmin=-mean_vmax,
-        cmax=mean_vmax,
-        title="Mean spectral coordinate",
-    )
     style_state_figure(
         mean_fig,
-        f"Mean spectral coordinates: full and sign-aligned reduced specifications, k={selected_k}",
+        f"Mean spectral coordinates: full and sign-aligned reduced specifications, k={selected_k}"
+        " (shared zero-centered scale within each matched pair)",
     )
     save_plotly_figure(
         mean_fig,
@@ -1223,7 +1280,6 @@ def create_state_diagrams(
     )
 
     difference_entries = []
-    difference_grids = []
     for component, row in selected.iterrows():
         reduced_component = int(row.reduced_comp) - 1
         z_full = (
@@ -1245,8 +1301,6 @@ def create_state_diagrams(
         difference_entries.append(
             (component, row, difference_table, difference_grid, count_grid)
         )
-        difference_grids.append(difference_grid)
-    difference_vmax = max(finite_abs_max(*difference_grids), 1e-12)
     difference_fig = make_subplots(
         rows=1,
         cols=N_MATCHED_COMPONENTS,
@@ -1261,7 +1315,10 @@ def create_state_diagrams(
     ):
         difference_fig.add_trace(
             heatmap_trace(
-                grid, count_grid, coloraxis="coloraxis", quantity_label="mean delta z"
+                grid,
+                count_grid,
+                coloraxis=coloraxis_name(column),
+                quantity_label="mean delta z",
             ),
             row=1,
             col=column,
@@ -1279,14 +1336,25 @@ def create_state_diagrams(
                     "shift": record["shift"],
                 }
             )
-    apply_coloraxis(
-        difference_fig,
-        coloraxis="coloraxis",
-        colorscale=pride,
-        cmin=-difference_vmax,
-        cmax=difference_vmax,
-        title="Mean delta z",
-    )
+        cmin, cmax, limit = symmetric_limits(grid)
+        ticks, ticktext = symmetric_ticks(limit)
+        x_domain, y_domain = subplot_axis_domain(
+            difference_fig, row=1, col=column, ncols=N_MATCHED_COMPONENTS
+        )
+        apply_coloraxis(
+            difference_fig,
+            coloraxis=coloraxis_name(column),
+            colorscale=pride,
+            cmin=cmin,
+            cmax=cmax,
+            cmid=0.0,
+            title="Mean value",
+            colorbar_x=x_domain[1] + 0.006,
+            colorbar_y=sum(y_domain) / 2,
+            colorbar_len=y_domain[1] - y_domain[0],
+            tickvals=ticks,
+            ticktext=ticktext,
+        )
     style_state_figure(
         difference_fig,
         f"Full-minus-reduced sign-aligned spectral differences, k={selected_k}",
@@ -1403,7 +1471,7 @@ def save_detailed_scatters(
     matching: pd.DataFrame,
     selected_k: int,
     scatters_dir: Path,
-    rainforest: list[list[float | str]],
+    lilac: list[list[float | str]],
     shift_limits: tuple[float, float],
 ) -> None:
     logging.info("Generating detailed embedding scatter plots")
@@ -1425,13 +1493,15 @@ def save_detailed_scatters(
             plot_df["y"] = y_sign * embedding[:, y_component - 1]
             plot_df["selected_k"] = selected_k
             plot_df["lambda_color"] = nonlinear_lambda_colors(plot_df["lambda"])
+            plot_df["lambda_hover"] = plot_df["lambda"]
             for descriptor in GLOBAL_DESCRIPTOR_COLS:
                 if descriptor in df.columns:
                     plot_df[descriptor] = df[descriptor].to_numpy()
             hover_columns = {
                 "file_id": True,
-                "lambda": ":.5g",
+                "lambda": False,
                 "lambda_color": False,
+                "lambda_hover": ":.5g",
                 "shift": ":.5g",
                 "selected_k": True,
                 "x": ":.6g",
@@ -1450,14 +1520,16 @@ def save_detailed_scatters(
                 if feature_set == "all_features"
                 else " (sign aligned to full specification)"
             )
-            for color_variable, color_column, color_range, colorbar_config in [
+            for color_key, color_label, color_column, color_range, colorbar_config in [
                 (
                     "lambda",
+                    "λ",
                     "lambda_color",
                     [0.0, 1.0],
                     lambda figure: configure_lambda_colorbar(figure),
                 ),
                 (
+                    "shift",
                     "shift",
                     "shift",
                     list(shift_limits),
@@ -1469,18 +1541,19 @@ def save_detailed_scatters(
                     x="x",
                     y="y",
                     color=color_column,
-                    color_continuous_scale=rainforest,
+                    color_continuous_scale=lilac,
                     range_color=color_range,
                     labels={
                         "x": f"Spec-{x_component}",
                         "y": f"Spec-{y_component}",
-                        "lambda_color": "lambda",
+                        "lambda": "λ",
+                        "lambda_hover": "λ",
                         "shift": "shift",
                     },
                     hover_data=hover_columns,
                     title=(
                         f"{title_feature_set}, k={selected_k}: Spec-{x_component} vs Spec-{y_component}"
-                        f"{alignment_note}, coloured by {color_variable}"
+                        f"{alignment_note}, coloured by {color_label}"
                     ),
                     opacity=EMBEDDING_MARKER_OPACITY,
                     render_mode="svg",
@@ -1493,7 +1566,7 @@ def save_detailed_scatters(
                 save_plotly_figure(
                     fig,
                     scatters_dir
-                    / f"scatter_{feature_set}_k{selected_k}_spec{x_component}_vs_spec{y_component}_{color_variable}",
+                    / f"scatter_{feature_set}_k{selected_k}_spec{x_component}_vs_spec{y_component}_{color_key}",
                     rows=1,
                     cols=1,
                     panel_width=850,
@@ -1615,8 +1688,8 @@ def main() -> None:
     logging.info("Crystallinity mode: %s", crystallinity_mode)
     logging.info("Main output directory: %s", results_dir.resolve())
 
+    lilac = matplotlib_cmap_to_plotly(cmr.lilac)
     pride = matplotlib_cmap_to_plotly(cmr.pride)
-    rainforest = matplotlib_cmap_to_plotly(cmr.rainforest)
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
         sample_metadata.loc[
@@ -1631,7 +1704,7 @@ def main() -> None:
     )
     if not len(state_lambdas) or not len(state_shifts):
         raise ValueError(
-            "No state points are available within the configured lambda plotting range."
+            "No state points are available within the configured λ plotting range."
         )
 
     logging.info("Generating initial feature-specification plots")
@@ -1645,7 +1718,7 @@ def main() -> None:
         state_shifts,
         directories,
         pride,
-        rainforest,
+        lilac,
         shift_limits,
     )
 
@@ -1692,7 +1765,7 @@ def main() -> None:
         matching,
         args.k,
         directories["scatters"],
-        rainforest,
+        lilac,
         shift_limits,
     )
     summary = write_data_outputs(
