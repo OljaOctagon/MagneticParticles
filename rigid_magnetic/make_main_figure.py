@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Create the publication main figure for the reduced spectral embedding."""
+"""Build the wide publication figure for the reduced spectral embedding."""
 
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib
 import json
+import shutil
+import subprocess
+import tempfile
+import xml.etree.ElementTree as element_tree
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,279 +22,209 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib import font_manager
 from matplotlib.colors import Normalize, PowerNorm, TwoSlopeNorm
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import Patch, Rectangle
 
-from feature_schema import (
-    CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES,
-    CRYSTALLINITY_SCALARS,
-    FEATURE_GROUPS as SCHEMA_FEATURE_GROUPS,
-    Q4_HISTOGRAM_FEATURES,
-    Q6_HISTOGRAM_FEATURES,
+import ML_diffusion_map_testing as analysis
+from topology_state_map import (
+    BEND,
+    DEFAULT_TOPOLOGY_DATA_PATH,
+    MISSING_TOPOLOGY_COLOR,
+    TOPOLOGY_CATEGORIES,
+    TOPOLOGY_COLORS,
+    TOPOLOGY_LABELS,
+    TopologyStateMap,
+    build_topology_state_map,
 )
 
 
 EXPECTED_K = 32
 EXPECTED_SEED = 42
 FEATURE_SET = "reduced_no_global"
-COORDINATE_COUNT = 3
-LAMBDA_COLOR_GAMMA = 0.5
-LAMBDA_COLOR_LIMITS = (0.0, 30.0)
-MISSING_CELL_COLOR = "#d0d0d0"
+DISPLAY_COORDINATES = (1, 2)
 ORIENTATION_CORRELATION_EPSILON = 0.05
-
-# Set this to an explicit list to override metadata-driven descriptor icons.
-DESCRIPTOR_PANEL_CONFIG: list[dict[str, str]] | None = None
-
-GROUP_DESCRIPTOR_DEFAULTS = {
-    "orientation": {"name": "Orientation distribution", "type": "histogram"},
-    "gofr": {"name": r"$g(r)$", "type": "radial_distribution"},
-    "Rg": {"name": r"$R_g$ distribution", "type": "histogram"},
-    "q4_coarse_histogram_features": {"name": r"$q_4$", "type": "histogram"},
-    "q6_coarse_histogram_features": {"name": r"$q_6$", "type": "histogram"},
-    "crystallinity_scalar_features": {"name": "Crystallinity", "type": "scalar"},
-    "crystallinity_coarse_histogram_features": {
-        "name": r"$q_4$, $q_6$ distributions",
-        "type": "histogram",
-    },
-    "global": {"name": "Global descriptors", "type": "scalar"},
-}
+FIGURE_SIZE = (16.5, 8.0)
+MATPLOTLIB_AXIS_LINEWIDTH = 0.8
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+element_tree.register_namespace("", SVG_NAMESPACE)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create a 2 x 3 publication figure from reduced spectral-embedding results."
+        description="Create the 2 x 3 publication figure for the reduced spectral embedding."
+    )
+    parser.add_argument("--results-dir", type=Path, required=True)
+    parser.add_argument(
+        "--output", type=Path, default=Path("figures/main_spectral_embedding")
     )
     parser.add_argument(
-        "--results-dir",
+        "--panel-a-svg",
         type=Path,
-        required=True,
-        help="Analysis run directory containing data/run_metadata.json.",
+        default=None,
+        help="External workflow SVG for Panel a. It remains vector in SVG/PDF output.",
     )
     parser.add_argument(
-        "--output",
+        "--panel-a-svg-has-label",
+        action="store_true",
+        help="Do not add the a.) label outside the external Panel-a SVG.",
+    )
+    parser.add_argument(
+        "--topology-data-path",
         type=Path,
-        default=Path("figures/main_spectral_embedding"),
-        help="Output base path without a file extension.",
+        default=None,
+        help="Topology pickle for Panel f; defaults to the state_diagram.ipynb source.",
     )
     parser.add_argument(
         "--data-path",
         type=Path,
         default=None,
-        help="Pickle input used only when embedding-coordinate CSV output is unavailable.",
-    )
-    parser.add_argument("--k", type=int, default=EXPECTED_K, help="Expected k value (default: 32).")
-    parser.add_argument(
-        "--seed", type=int, default=EXPECTED_SEED, help="Expected random seed (default: 42)."
+        help="Input pickle used only if the coordinate export is absent.",
     )
     parser.add_argument(
-        "--overwrite", action="store_true", help="Allow replacing existing figure outputs."
+        "--bottom-right",
+        choices=("topology", "psi3"),
+        default="topology",
+        help="Panel f content (default: topology).",
     )
+    parser.add_argument("--k", type=int, default=EXPECTED_K)
+    parser.add_argument("--seed", type=int, default=EXPECTED_SEED)
+    parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def resolve_data_directory(results_dir: Path) -> Path:
-    results_dir = results_dir.expanduser().resolve()
-    data_dir = results_dir / "data"
+def resolve_data_directory(results_dir: Path) -> tuple[Path, Path]:
+    candidate = results_dir.expanduser().resolve()
+    data_dir = candidate / "data"
     if data_dir.is_dir():
-        return data_dir
-    if results_dir.name == "data" and results_dir.is_dir():
-        return results_dir
-    raise FileNotFoundError(
-        f"Results directory must contain a data subdirectory: {results_dir}"
-    )
+        return candidate, data_dir
+    if candidate.name == "data" and candidate.is_dir():
+        return candidate.parent, candidate
+    raise FileNotFoundError(f"Results directory must contain data/: {candidate}")
 
 
-def load_run_metadata(data_dir: Path) -> dict[str, Any]:
-    metadata_path = data_dir / "run_metadata.json"
-    if not metadata_path.is_file():
-        raise FileNotFoundError(f"Required run metadata is missing: {metadata_path}")
-    with metadata_path.open(encoding="utf-8") as handle:
+def load_metadata(data_dir: Path) -> dict[str, Any]:
+    path = data_dir / "run_metadata.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"Required run metadata is missing: {path}")
+    with path.open(encoding="utf-8") as handle:
         metadata = json.load(handle)
-    for field in ("selected_k", "random_seed", "feature_columns", "state_lambda_plot_limits"):
-        if field not in metadata:
-            raise ValueError(f"Run metadata is missing required field '{field}'.")
+    required = {
+        "input_data_path",
+        "selected_k",
+        "random_seed",
+        "n_configurations",
+        "state_lambda_plot_limits",
+        "feature_set_groups",
+        "feature_groups",
+        "feature_columns",
+        "crystallinity_features",
+    }
+    missing = sorted(required.difference(metadata))
+    if missing:
+        raise ValueError(f"Run metadata is missing required fields: {missing}")
     return metadata
 
 
-def validate_run_parameters(metadata: dict[str, Any], args: argparse.Namespace) -> int:
-    if args.k != EXPECTED_K:
+def validate_run(metadata: dict[str, Any], args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    if args.k != EXPECTED_K or args.seed != EXPECTED_SEED:
         raise ValueError(
-            f"This main-figure configuration is defined for k={EXPECTED_K}; got --k={args.k}."
+            f"This final figure is configured for k={EXPECTED_K}, seed={EXPECTED_SEED}."
         )
-    if args.seed != EXPECTED_SEED:
+    if int(metadata["selected_k"]) != args.k:
         raise ValueError(
-            f"This main-figure configuration is defined for seed {EXPECTED_SEED}; got --seed={args.seed}."
+            f"Run metadata has k={metadata['selected_k']}; expected k={args.k}."
         )
-    selected_k = int(metadata["selected_k"])
-    random_seed = int(metadata["random_seed"])
-    if selected_k != args.k:
+    if int(metadata["random_seed"]) != args.seed:
         raise ValueError(
-            f"Run metadata selected_k={selected_k}, but this figure requires k={args.k}."
+            f"Run metadata has seed={metadata['random_seed']}; expected seed={args.seed}."
         )
-    if random_seed != args.seed:
+    groups = metadata["feature_set_groups"].get(FEATURE_SET)
+    columns = metadata["feature_columns"].get(FEATURE_SET)
+    if not isinstance(groups, list) or not groups or not isinstance(columns, list) or not columns:
+        raise ValueError(f"Metadata does not define concrete groups and columns for {FEATURE_SET}.")
+    feature_groups = metadata["feature_groups"]
+    unknown = [group for group in groups if group not in feature_groups]
+    if unknown:
+        raise ValueError(f"Metadata references unknown selected feature groups: {unknown}")
+    flattened = [column for group in groups for column in feature_groups[group]]
+    if flattened != columns:
+        raise ValueError("Selected feature groups do not match the recorded reduced columns.")
+    crystallinity = metadata["crystallinity_features"]
+    active_crystallinity = crystallinity.get("active_columns", [])
+    if crystallinity.get("mode") != "none" or active_crystallinity:
         raise ValueError(
-            f"Run metadata random_seed={random_seed}, but this figure requires seed {args.seed}."
+            "The final main figure requires the crystallinity-free reduced run; "
+            f"metadata reports mode={crystallinity.get('mode')!r}, active columns={active_crystallinity!r}."
         )
-    return selected_k
+    return list(groups), list(columns)
 
 
-def selected_feature_definition(metadata: dict[str, Any]) -> tuple[list[str], list[str], str]:
-    feature_columns = metadata["feature_columns"]
-    if FEATURE_SET not in feature_columns or not isinstance(feature_columns[FEATURE_SET], list):
-        raise ValueError(
-            f"Run metadata does not declare concrete columns for feature set '{FEATURE_SET}'."
-        )
-    selected_columns = list(feature_columns[FEATURE_SET])
-    if not selected_columns:
-        raise ValueError(f"Feature set '{FEATURE_SET}' has no selected columns.")
-
-    feature_set_groups = metadata.get("feature_set_groups")
-    feature_groups = metadata.get("feature_groups")
-    if isinstance(feature_set_groups, dict) and isinstance(feature_groups, dict):
-        selected_groups = feature_set_groups.get(FEATURE_SET)
-        if not isinstance(selected_groups, list) or not selected_groups:
-            raise ValueError(
-                f"Run metadata does not declare concrete groups for feature set '{FEATURE_SET}'."
-            )
-        unknown_groups = [group for group in selected_groups if group not in feature_groups]
-        if unknown_groups:
-            raise ValueError(f"Run metadata references unknown feature groups: {unknown_groups}")
-        flattened_columns = [
-            column for group in selected_groups for column in feature_groups[group]
-        ]
-        if flattened_columns != selected_columns:
-            raise ValueError(
-                "Run metadata feature groups and selected feature columns do not agree for "
-                f"'{FEATURE_SET}'."
-            )
-        return list(selected_groups), selected_columns, "run_metadata"
-
-    return [], selected_columns, "legacy_columns_only"
-
-
-def schema_feature_groups() -> dict[str, list[str]]:
-    """Return named schema groups for interpreting legacy column-only metadata."""
-    return {
-        **{name: list(columns) for name, columns in SCHEMA_FEATURE_GROUPS.items()},
-        "q4_coarse_histogram_features": list(Q4_HISTOGRAM_FEATURES),
-        "q6_coarse_histogram_features": list(Q6_HISTOGRAM_FEATURES),
-        "crystallinity_scalar_features": list(CRYSTALLINITY_SCALARS),
-        "crystallinity_coarse_histogram_features": list(
-            CRYSTALLINITY_COARSE_HISTOGRAM_FEATURES
-        ),
-    }
-
-
-def infer_groups_from_columns(selected_columns: list[str]) -> list[str]:
-    """Identify complete schema groups from legacy metadata without using its set name."""
-    groups = schema_feature_groups()
-    matched_groups: list[str] = []
-    remaining = set(selected_columns)
-    preferred_order = [
-        "global",
-        "orientation",
-        "Rg",
-        "gofr",
-        "crystallinity_scalar_features",
-        "q4_coarse_histogram_features",
-        "q6_coarse_histogram_features",
-    ]
-    for name in preferred_order:
-        columns = set(groups[name])
-        if columns and columns.issubset(remaining):
-            matched_groups.append(name)
-            remaining.difference_update(columns)
-    if remaining:
-        raise ValueError(
-            "Legacy metadata contains selected columns that cannot be assigned to complete "
-            f"schema groups: {sorted(remaining)}"
-        )
-    return matched_groups
-
-
-def descriptor_panels_for_groups(selected_groups: list[str]) -> list[dict[str, str]]:
-    if DESCRIPTOR_PANEL_CONFIG is not None:
-        return [dict(panel) for panel in DESCRIPTOR_PANEL_CONFIG]
-    panels = []
-    for group in selected_groups:
-        panel = GROUP_DESCRIPTOR_DEFAULTS.get(
-            group, {"name": group.replace("_", " "), "type": "histogram"}
-        )
-        panels.append({**panel, "group": group})
-    return panels
-
-
-def coordinate_file(data_dir: Path, selected_k: int) -> Path:
+def coordinate_path(data_dir: Path, selected_k: int) -> Path:
     return data_dir / f"reduced_embedding_coordinates_k{selected_k}.csv"
 
 
 def validate_coordinate_table(
-    coordinates: pd.DataFrame, selected_k: int, expected_rows: int | None
+    table: pd.DataFrame, metadata: dict[str, Any], selected_k: int, data_dir: Path
 ) -> pd.DataFrame:
-    coordinate_columns = [
+    required = [
         "file_id",
         "lambda",
         "shift",
-        *[f"spectral_coordinate_{index}" for index in range(1, COORDINATE_COUNT + 1)],
+        "k",
+        "feature_set",
+        *[f"spectral_coordinate_{index}" for index in range(1, 4)],
     ]
-    missing_columns = [column for column in coordinate_columns if column not in coordinates]
-    if missing_columns:
-        raise ValueError(f"Embedding-coordinate data is missing columns: {missing_columns}")
-    if "k" in coordinates and not coordinates["k"].eq(selected_k).all():
-        raise ValueError("Embedding-coordinate data contains a k value different from run metadata.")
-    if "feature_set" in coordinates and not coordinates["feature_set"].eq(FEATURE_SET).all():
+    missing = [column for column in required if column not in table]
+    if missing:
+        raise ValueError(f"Embedding-coordinate CSV is missing columns: {missing}")
+    if len(table) != int(metadata["n_configurations"]):
         raise ValueError(
-            f"Embedding-coordinate data contains a feature set other than '{FEATURE_SET}'."
+            f"Coordinate CSV has {len(table)} rows; metadata declares {metadata['n_configurations']}."
         )
-    if expected_rows is not None and len(coordinates) != expected_rows:
-        raise ValueError(
-            f"Embedding-coordinate data has {len(coordinates)} rows; metadata declares {expected_rows}."
+    if not table["k"].eq(selected_k).all() or not table["feature_set"].eq(FEATURE_SET).all():
+        raise ValueError("Coordinate CSV k or feature_set does not match the selected run.")
+    numeric = [column for column in required if column not in {"file_id", "feature_set"}]
+    validated = table.copy()
+    validated[numeric] = validated[numeric].apply(pd.to_numeric, errors="coerce")
+    if not np.isfinite(validated[numeric].to_numpy(dtype=float)).all():
+        raise ValueError("Coordinate CSV contains missing or non-finite numeric values.")
+    if validated["file_id"].isna().any() or validated["file_id"].duplicated().any():
+        raise ValueError("Coordinate CSV file_id values must be present and unique.")
+    counts_path = data_dir / "state_point_counts.csv"
+    if counts_path.is_file():
+        expected = pd.read_csv(counts_path).query("k == @selected_k")
+        actual = (
+            validated.groupby(["lambda", "shift"], sort=True)
+            .size()
+            .rename("count")
+            .reset_index()
         )
-    numeric_columns = [column for column in coordinate_columns if column != "file_id"]
-    numeric_values = coordinates[numeric_columns].apply(pd.to_numeric, errors="coerce")
-    if not np.isfinite(numeric_values.to_numpy(dtype=float)).all():
-        raise ValueError("Embedding-coordinate data contains missing or non-finite numeric values.")
-    validated = coordinates.copy()
-    validated[numeric_columns] = numeric_values
+        comparison = expected[["lambda", "shift", "count"]].merge(
+            actual, on=["lambda", "shift"], how="outer", suffixes=("_expected", "_actual")
+        )
+        if comparison.isna().any().any() or not comparison["count_expected"].eq(comparison["count_actual"]).all():
+            raise ValueError("Coordinate CSV state-point counts do not match this run's metadata output.")
     return validated
 
 
 def reconstruct_coordinates(
     metadata: dict[str, Any],
+    groups: list[str],
+    columns: list[str],
     data_path: Path,
     selected_k: int,
-    selected_groups: list[str],
-    selected_columns: list[str],
 ) -> pd.DataFrame:
-    """Recreate coordinates only when the additive analysis CSV is unavailable."""
     if not data_path.is_file():
-        raise FileNotFoundError(
-            f"Embedding coordinates are unavailable and the source pickle does not exist: {data_path}"
-        )
-    analysis = importlib.import_module("ML_diffusion_map_testing")
+        raise FileNotFoundError(f"Recorded input pickle does not exist: {data_path}")
     if analysis.SEED != int(metadata["random_seed"]):
-        raise ValueError(
-            "The current analysis helper seed differs from the selected run metadata; "
-            "cannot reproduce embedding coordinates safely."
-        )
-    crystallinity_mode = metadata.get("crystallinity_features", {}).get("mode")
-    if not isinstance(crystallinity_mode, str):
-        raise ValueError(
-            "Run metadata lacks crystallinity_features.mode required for coordinate reconstruction."
-        )
-
-    df, feature_groups, _ = analysis.load_and_validate_data(data_path, crystallinity_mode)
-    if not selected_groups:
-        selected_groups = infer_groups_from_columns(selected_columns)
-    matrices, reconstructed_columns = analysis.standardized_feature_matrices(
-        df, feature_groups, {FEATURE_SET: selected_groups}
+        raise ValueError("Analysis helper seed differs from the selected run metadata.")
+    df, feature_groups, _ = analysis.load_and_validate_data(data_path, "none")
+    matrices, rebuilt_columns = analysis.standardized_feature_matrices(
+        df, feature_groups, {FEATURE_SET: groups}
     )
-    if reconstructed_columns[FEATURE_SET] != selected_columns:
-        raise ValueError(
-            "Current preprocessing does not reproduce the concrete reduced feature columns "
-            "recorded in run metadata."
-        )
+    if rebuilt_columns[FEATURE_SET] != columns:
+        raise ValueError("Current preprocessing does not reproduce the metadata feature columns.")
     _, embeddings, _ = analysis.compute_detailed_embeddings(
         matrices, [selected_k], selected_k
     )
@@ -304,33 +239,26 @@ def reconstruct_coordinates(
 def load_coordinates(
     data_dir: Path,
     metadata: dict[str, Any],
+    groups: list[str],
+    columns: list[str],
     args: argparse.Namespace,
-    selected_k: int,
-    selected_groups: list[str],
-    selected_columns: list[str],
 ) -> tuple[pd.DataFrame, dict[str, str]]:
-    exported_path = coordinate_file(data_dir, selected_k)
-    expected_rows = int(metadata.get("n_configurations", 0)) or None
-    if exported_path.is_file():
-        coordinates = pd.read_csv(exported_path)
-        source = {"mode": "exported_csv", "path": str(exported_path.resolve())}
+    selected_k = int(metadata["selected_k"])
+    exported = coordinate_path(data_dir, selected_k)
+    if exported.is_file():
+        coordinates = pd.read_csv(exported)
+        source = {"mode": "exported_csv", "path": str(exported.resolve())}
     else:
-        configured_path = args.data_path
-        metadata_path = metadata.get("input_data_path")
-        data_path = configured_path or (Path(metadata_path) if metadata_path else None)
-        if data_path is None:
-            raise FileNotFoundError(
-                f"Missing {exported_path.name}; provide --data-path to reconstruct coordinates."
-            )
+        data_path = args.data_path or Path(metadata["input_data_path"])
         data_path = data_path.expanduser().resolve()
         coordinates = reconstruct_coordinates(
-            metadata, data_path, selected_k, selected_groups, selected_columns
+            metadata, groups, columns, data_path, selected_k
         )
         source = {"mode": "reconstructed_from_pickle", "path": str(data_path)}
-    return validate_coordinate_table(coordinates, selected_k, expected_rows), source
+    return validate_coordinate_table(coordinates, metadata, selected_k, data_dir), source
 
 
-def correlation(values: np.ndarray, metadata_values: np.ndarray) -> float | None:
+def pearson_correlation(values: np.ndarray, metadata_values: np.ndarray) -> float | None:
     if np.std(values) == 0.0 or np.std(metadata_values) == 0.0:
         return None
     value = float(np.corrcoef(values, metadata_values)[0, 1])
@@ -338,193 +266,42 @@ def correlation(values: np.ndarray, metadata_values: np.ndarray) -> float | None
 
 
 def orient_coordinates(coordinates: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    """Fix arbitrary spectral-vector signs with a metadata-only convention."""
     oriented = coordinates.copy()
     lambda_values = oriented["lambda"].to_numpy(dtype=float)
     shift_values = oriented["shift"].to_numpy(dtype=float)
     decisions = []
-    for index in range(1, COORDINATE_COUNT + 1):
+    for index in range(1, 4):
         column = f"spectral_coordinate_{index}"
         values = oriented[column].to_numpy(dtype=float)
-        lambda_correlation = correlation(values, lambda_values)
-        shift_correlation = correlation(values, shift_values)
-        if lambda_correlation is not None and abs(lambda_correlation) > ORIENTATION_CORRELATION_EPSILON:
-            sign = 1 if lambda_correlation > 0 else -1
+        lambda_r = pearson_correlation(values, lambda_values)
+        shift_r = pearson_correlation(values, shift_values)
+        if lambda_r is not None and abs(lambda_r) > ORIENTATION_CORRELATION_EPSILON:
+            sign = 1 if lambda_r > 0 else -1
             criterion = "positive_pearson_correlation_with_lambda"
-        elif shift_correlation is not None and abs(shift_correlation) > ORIENTATION_CORRELATION_EPSILON:
-            sign = 1 if shift_correlation > 0 else -1
+            selected_correlation = lambda_r
+        elif shift_r is not None and abs(shift_r) > ORIENTATION_CORRELATION_EPSILON:
+            sign = 1 if shift_r > 0 else -1
             criterion = "positive_pearson_correlation_with_shift"
+            selected_correlation = shift_r
         else:
-            largest_index = int(np.argmax(np.abs(values)))
-            sign = 1 if values[largest_index] >= 0 else -1
+            maximum_index = int(np.argmax(np.abs(values)))
+            sign = 1 if values[maximum_index] >= 0 else -1
             criterion = "largest_absolute_coordinate_entry_positive"
+            selected_correlation = None
         oriented[column] = sign * values
         decisions.append(
             {
                 "coordinate": index,
+                "original_sign": 1,
                 "applied_sign": sign,
                 "criterion": criterion,
-                "raw_lambda_pearson_r": lambda_correlation,
-                "raw_shift_pearson_r": shift_correlation,
+                "correlation_used": selected_correlation,
+                "raw_lambda_pearson_r": lambda_r,
+                "raw_shift_pearson_r": shift_r,
                 "correlation_epsilon": ORIENTATION_CORRELATION_EPSILON,
             }
         )
     return oriented, decisions
-
-
-def choose_colormaps():
-    try:
-        import cmasher as cmr
-
-        return cmr.rainforest, cmr.pride
-    except ImportError:
-        return plt.get_cmap("viridis"), plt.get_cmap("RdBu_r")
-
-
-def add_panel_label(axis: plt.Axes, letter: str) -> None:
-    axis.text(
-        -0.16,
-        1.05,
-        letter,
-        transform=axis.transAxes,
-        fontsize=11,
-        fontweight="bold",
-        va="bottom",
-        ha="left",
-    )
-
-
-def draw_descriptor_icon(axis: plt.Axes, panel: dict[str, str]) -> None:
-    axis.set_axis_off()
-    icon_type = panel["type"]
-    if icon_type == "radial_distribution":
-        x = np.linspace(0.0, 1.0, 120)
-        y = 0.18 + 0.58 * np.exp(-3.2 * x) * (0.55 + 0.45 * np.cos(18 * x))
-        axis.plot(x, y, color="#1f4e79", linewidth=1.2)
-        axis.axhline(0.18, color="#909090", linewidth=0.5)
-    elif icon_type == "scalar":
-        x = np.array([0.22, 0.5, 0.78])
-        axis.plot([0.1, 0.9], [0.45, 0.45], color="#909090", linewidth=0.6)
-        axis.scatter(x, [0.36, 0.63, 0.49], s=11, color="#1f4e79", zorder=2)
-    else:
-        heights = np.array([0.18, 0.32, 0.58, 0.78, 0.62, 0.36, 0.2])
-        axis.bar(
-            np.arange(len(heights)), heights, width=0.82, color="#5b84b1", edgecolor="none"
-        )
-        axis.set_xlim(-0.55, len(heights) - 0.45)
-    label = panel["name"]
-    if label == "Orientation distribution":
-        label = "Orientation\ndistribution"
-    axis.text(
-        0.5,
-        -0.18,
-        label,
-        transform=axis.transAxes,
-        ha="center",
-        va="top",
-        fontsize=5.4,
-        linespacing=0.85,
-    )
-
-
-def draw_knn_graph(axis: plt.Axes) -> None:
-    positions = np.array(
-        [[0.12, 0.52], [0.34, 0.8], [0.6, 0.75], [0.84, 0.53], [0.65, 0.22], [0.29, 0.22]]
-    )
-    edges = [(0, 1), (0, 5), (0, 2), (1, 2), (1, 3), (2, 3), (2, 4), (3, 4), (4, 5), (5, 2)]
-    for start, end in edges:
-        axis.plot(
-            positions[[start, end], 0], positions[[start, end], 1], color="#7d8790", linewidth=0.65
-        )
-    axis.scatter(positions[:, 0], positions[:, 1], s=15, color="#244a68", zorder=2)
-
-
-def arrow(axis: plt.Axes, start: tuple[float, float], end: tuple[float, float]) -> None:
-    axis.add_patch(
-        FancyArrowPatch(
-            start,
-            end,
-            transform=axis.transAxes,
-            arrowstyle="-|>",
-            mutation_scale=8,
-            linewidth=0.75,
-            color="#56616a",
-        )
-    )
-
-
-def draw_panel_a(axis: plt.Axes, descriptor_panels: list[dict[str, str]]) -> None:
-    axis.set_axis_off()
-    add_panel_label(axis, "A")
-    if not descriptor_panels:
-        raise ValueError("Panel A requires at least one descriptor panel.")
-    n_columns = 2 if len(descriptor_panels) > 1 else 1
-    n_rows = int(np.ceil(len(descriptor_panels) / n_columns))
-    icon_width = 0.22 if n_columns == 2 else 0.28
-    icon_height = 0.16 if n_rows == 1 else 0.1
-    row_spacing = 0.22 if n_rows > 1 else 0.0
-    descriptor_y = 0.84 if n_rows > 1 else 0.79
-    for index, panel in enumerate(descriptor_panels):
-        row, column = divmod(index, n_columns)
-        x0 = (0.11 if n_columns == 2 else 0.36) + column * 0.42
-        y0 = descriptor_y - row * row_spacing
-        icon_axis = axis.inset_axes([x0, y0, icon_width, icon_height])
-        draw_descriptor_icon(icon_axis, panel)
-
-    descriptor_bottom = descriptor_y - (n_rows - 1) * row_spacing
-    standard_y = descriptor_bottom - (0.26 if n_rows > 1 else 0.32)
-    graph_y = standard_y - (0.19 if n_rows > 1 else 0.22)
-    embedding_y = graph_y - 0.12
-    standard_x = 0.5
-    axis.add_patch(
-        plt.Rectangle((standard_x - 0.14, standard_y), 0.28, 0.12, transform=axis.transAxes, fill=False, linewidth=0.7, edgecolor="#56616a")
-    )
-    axis.text(standard_x, standard_y + 0.06, "standardize", transform=axis.transAxes, ha="center", va="center", fontsize=5.6)
-    graph_axis = axis.inset_axes([0.39, graph_y, 0.22, 0.14])
-    graph_axis.set_axis_off()
-    draw_knn_graph(graph_axis)
-    axis.text(0.5, graph_y - 0.025, r"kNN graph ($k=32$)", transform=axis.transAxes, ha="center", va="top", fontsize=5.5)
-    axis.text(0.38, embedding_y, "spectral embedding", transform=axis.transAxes, ha="center", va="center", fontsize=5.6)
-    output_axis = axis.inset_axes([0.62, embedding_y - 0.075, 0.12, 0.11])
-    output_axis.set_axis_off()
-    output_axis.plot([0.12, 0.88], [0.2, 0.75], color="#1f4e79", linewidth=0.9)
-    output_axis.plot([0.12, 0.88], [0.42, 0.24], color="#b55d3d", linewidth=0.9)
-    axis.text(0.8, embedding_y, r"$(\psi_1, \psi_2, \psi_3)$", transform=axis.transAxes, ha="center", va="center", fontsize=5.3)
-    for column in range(n_columns):
-        descriptor_center = (0.22 if n_columns == 2 else 0.5) + column * 0.42
-        arrow(axis, (descriptor_center, descriptor_bottom - 0.015), (0.5, standard_y + 0.12))
-    arrow(axis, (0.5, standard_y), (0.5, graph_y + 0.14))
-    arrow(axis, (0.5, graph_y), (0.5, embedding_y + 0.025))
-
-
-def scatter_limits(coordinates: pd.DataFrame) -> tuple[tuple[float, float], tuple[float, float]]:
-    limits = []
-    for column in ("spectral_coordinate_1", "spectral_coordinate_2"):
-        values = coordinates[column].to_numpy(dtype=float)
-        lower, upper = float(values.min()), float(values.max())
-        padding = max((upper - lower) * 0.04, 1e-12)
-        limits.append((lower - padding, upper + padding))
-    return limits[0], limits[1]
-
-
-def coordinate_state_grids(
-    coordinates: pd.DataFrame, lambda_limits: tuple[float, float]
-) -> tuple[list[pd.DataFrame], np.ndarray, np.ndarray]:
-    visible = coordinates.loc[coordinates["lambda"].between(*lambda_limits)].copy()
-    if visible.empty:
-        raise ValueError("No coordinate data falls within the metadata lambda plot limits.")
-    lambda_values = np.sort(visible["lambda"].unique())
-    shift_values = np.sort(visible["shift"].unique())
-    grids = []
-    for index in range(1, COORDINATE_COUNT + 1):
-        grid = (
-            visible.groupby(["lambda", "shift"], sort=True)[f"spectral_coordinate_{index}"]
-            .mean()
-            .unstack("shift")
-            .reindex(index=lambda_values, columns=shift_values)
-        )
-        grids.append(grid)
-    return grids, lambda_values, shift_values
 
 
 def cell_edges(values: np.ndarray) -> np.ndarray:
@@ -535,6 +312,293 @@ def cell_edges(values: np.ndarray) -> np.ndarray:
     return np.concatenate(
         ([values[0] - (midpoints[0] - values[0])], midpoints, [values[-1] + (values[-1] - midpoints[-1])])
     )
+
+
+def spectral_state_grids(
+    coordinates: pd.DataFrame,
+    lambda_limits: tuple[float, float],
+    indices: tuple[int, ...],
+) -> tuple[dict[int, pd.DataFrame], np.ndarray, np.ndarray]:
+    visible = coordinates.loc[coordinates["lambda"].between(*lambda_limits)].copy()
+    if visible.empty:
+        raise ValueError("No configurations fall within the configured state-diagram lambda range.")
+    lambda_values = np.sort(visible["lambda"].unique())
+    shift_values = np.sort(visible["shift"].unique())
+    metadata = visible[["lambda", "shift"]]
+    grids = {}
+    for index in indices:
+        statistics = analysis.state_stat_table(
+            metadata, visible[f"spectral_coordinate_{index}"].to_numpy(dtype=float)
+        )
+        grids[index] = analysis.state_grid(
+            statistics, "mean", lambda_values, shift_values
+        )
+    return grids, lambda_values, shift_values
+
+
+def choose_font() -> tuple[str, bool]:
+    names = {font.name.casefold() for font in font_manager.fontManager.ttflist}
+    if "lato" in names:
+        return "Lato", True
+    return "DejaVu Sans", False
+
+
+def style_axis(axis: plt.Axes) -> None:
+    axis.grid(False)
+    axis.tick_params(width=MATPLOTLIB_AXIS_LINEWIDTH, length=4, pad=4)
+    for spine in axis.spines.values():
+        spine.set_linewidth(MATPLOTLIB_AXIS_LINEWIDTH)
+
+
+def panel_label(axis: plt.Axes, label: str, *, inside: bool = False) -> None:
+    axis.text(
+        0.02 if inside else -0.12,
+        1.045,
+        label,
+        transform=axis.transAxes,
+        fontweight="bold",
+        fontsize=analysis.TITLE_FONT,
+        ha="left",
+        va="bottom",
+        clip_on=False,
+    )
+
+
+def draw_panel_a_placeholder(axis: plt.Axes) -> None:
+    axis.set_axis_off()
+    axis.add_patch(
+        Rectangle(
+            (0.04, 0.06), 0.92, 0.87, transform=axis.transAxes,
+            fill=False, linewidth=MATPLOTLIB_AXIS_LINEWIDTH, edgecolor="#6b7280"
+        )
+    )
+    axis.text(0.5, 0.52, "Panel a.) SVG", ha="center", va="center", transform=axis.transAxes)
+    panel_label(axis, "a.)")
+
+
+def topology_legend(axis: plt.Axes) -> None:
+    axis.set_axis_off()
+    handles = [
+        Patch(facecolor=TOPOLOGY_COLORS[category], edgecolor="none", label=TOPOLOGY_LABELS[category])
+        for category in TOPOLOGY_CATEGORIES
+    ]
+    axis.legend(
+        handles=handles,
+        title="Connectivity\ntypes",
+        loc="center left",
+        frameon=False,
+        fontsize=8,
+        title_fontsize=8.5,
+        handlelength=1.0,
+        handletextpad=0.4,
+        labelspacing=0.45,
+        borderaxespad=0.0,
+    )
+
+
+def draw_topology_map(
+    axis: plt.Axes,
+    topology: TopologyStateMap,
+    shift_edges: np.ndarray,
+    lambda_edges: np.ndarray,
+) -> None:
+    mesh = axis.pcolormesh(
+        shift_edges,
+        lambda_edges,
+        np.zeros(topology.rgba.shape[:2]),
+        shading="flat",
+        edgecolors="none",
+        rasterized=True,
+    )
+    # Disable scalar-mappable recoloring so each cell keeps its topology RGB mix.
+    mesh.set_array(None)
+    mesh.set_facecolor(topology.rgba.reshape(-1, 4))
+
+
+def build_figure(
+    coordinates: pd.DataFrame,
+    lambda_limits: tuple[float, float],
+    topology_path: Path | None,
+    bottom_right: str,
+    panel_a_external: bool,
+) -> tuple[plt.Figure, plt.Axes, dict[str, Any]]:
+    font_name, lato_available = choose_font()
+    plt.rcParams.update(
+        {
+            "font.family": font_name,
+            "font.size": analysis.TICK_FONT,
+            "axes.labelsize": analysis.TICK_FONT,
+            "axes.titlesize": analysis.TITLE_FONT,
+            "xtick.labelsize": analysis.TICK_FONT - 1,
+            "ytick.labelsize": analysis.TICK_FONT - 1,
+            "axes.linewidth": MATPLOTLIB_AXIS_LINEWIDTH,
+            "svg.fonttype": "none",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+        }
+    )
+    figure = plt.figure(figsize=FIGURE_SIZE, facecolor="white")
+    outer = figure.add_gridspec(2, 1, height_ratios=(1.15, 0.9), hspace=0.34)
+    top = outer[0].subgridspec(1, 3, width_ratios=(0.98, 1.06, 1.06), wspace=0.18)
+    bottom = outer[1].subgridspec(
+        1, 5, width_ratios=(1.0, 1.0, 0.055, 1.0, 0.25), wspace=0.2
+    )
+    axis_a = figure.add_subplot(top[0])
+    b_layout = top[1].subgridspec(1, 2, width_ratios=(1.0, 0.045), wspace=0.06)
+    c_layout = top[2].subgridspec(1, 2, width_ratios=(1.0, 0.045), wspace=0.06)
+    axis_b = figure.add_subplot(b_layout[0])
+    lambda_colorbar_axis = figure.add_subplot(b_layout[1])
+    axis_c = figure.add_subplot(c_layout[0])
+    shift_colorbar_axis = figure.add_subplot(c_layout[1])
+    axis_d = figure.add_subplot(bottom[0])
+    axis_e = figure.add_subplot(bottom[1])
+    spectral_colorbar_axis = figure.add_subplot(bottom[2])
+    axis_f = figure.add_subplot(bottom[3])
+    topology_legend_axis = figure.add_subplot(bottom[4])
+    figure.subplots_adjust(left=0.055, right=0.975, top=0.945, bottom=0.105)
+
+    if panel_a_external:
+        axis_a.set_axis_off()
+    else:
+        draw_panel_a_placeholder(axis_a)
+
+    x_values = coordinates["spectral_coordinate_1"].to_numpy(dtype=float)
+    y_values = coordinates["spectral_coordinate_2"].to_numpy(dtype=float)
+    lambda_values = coordinates["lambda"].to_numpy(dtype=float)
+    shift_values = coordinates["shift"].to_numpy(dtype=float)
+    x_padding = max(0.04 * np.ptp(x_values), 1e-12)
+    y_padding = max(0.04 * np.ptp(y_values), 1e-12)
+    x_limits = (float(x_values.min() - x_padding), float(x_values.max() + x_padding))
+    y_limits = (float(y_values.min() - y_padding), float(y_values.max() + y_padding))
+    lambda_norm = PowerNorm(
+        gamma=analysis.LAMBDA_COLOR_GAMMA,
+        vmin=analysis.LAMBDA_COLOR_VMIN,
+        vmax=analysis.LAMBDA_COLOR_VMAX,
+    )
+    lambda_scatter = axis_b.scatter(
+        x_values,
+        y_values,
+        c=np.clip(lambda_values, analysis.LAMBDA_COLOR_VMIN, analysis.LAMBDA_COLOR_VMAX),
+        cmap=analysis.cmr.lilac,
+        norm=lambda_norm,
+        s=analysis.EMBEDDING_MARKER_SIZE,
+        alpha=analysis.EMBEDDING_MARKER_OPACITY,
+        linewidths=0,
+        rasterized=True,
+    )
+    shift_norm = Normalize(vmin=float(shift_values.min()), vmax=float(shift_values.max()))
+    shift_scatter = axis_c.scatter(
+        x_values,
+        y_values,
+        c=shift_values,
+        cmap=analysis.cmr.lilac,
+        norm=shift_norm,
+        s=analysis.EMBEDDING_MARKER_SIZE,
+        alpha=analysis.EMBEDDING_MARKER_OPACITY,
+        linewidths=0,
+        rasterized=True,
+    )
+    for axis, label in ((axis_b, "b.)"), (axis_c, "c.)")):
+        axis.set(xlim=x_limits, ylim=y_limits, xlabel=r"$\psi_1$", ylabel=r"$\psi_2$")
+        axis.set_box_aspect(0.78)
+        style_axis(axis)
+        panel_label(axis, label)
+    lambda_colorbar = figure.colorbar(lambda_scatter, cax=lambda_colorbar_axis)
+    lambda_colorbar.set_label(r"$\lambda$", labelpad=5)
+    lambda_colorbar.set_ticks(np.arange(0.0, 31.0, 5.0))
+    lambda_colorbar.ax.tick_params(pad=3, width=MATPLOTLIB_AXIS_LINEWIDTH)
+    shift_colorbar = figure.colorbar(shift_scatter, cax=shift_colorbar_axis)
+    shift_colorbar.set_label("shift", labelpad=5)
+    shift_colorbar.ax.tick_params(pad=3, width=MATPLOTLIB_AXIS_LINEWIDTH)
+
+    indices = (1, 2, 3) if bottom_right == "psi3" else (1, 2)
+    grids, state_lambdas, state_shifts = spectral_state_grids(
+        coordinates, lambda_limits, indices
+    )
+    color_limit = analysis.symmetric_limits(*(grids[index] for index in indices))[2]
+    map_norm = TwoSlopeNorm(vmin=-color_limit, vcenter=0.0, vmax=color_limit)
+    spectral_cmap = analysis.cmr.pride.copy()
+    spectral_cmap.set_bad(analysis.MISSING_CELL_COLOR)
+    shift_edges = cell_edges(state_shifts)
+    lambda_edges = cell_edges(state_lambdas)
+    map_axes = ((axis_d, 1, "d.)"), (axis_e, 2, "e.)"))
+    if bottom_right == "psi3":
+        map_axes += ((axis_f, 3, "f.)"),)
+    image = None
+    for axis, index, label in map_axes:
+        image = axis.pcolormesh(
+            shift_edges,
+            lambda_edges,
+            np.ma.masked_invalid(grids[index].to_numpy(dtype=float)),
+            cmap=spectral_cmap,
+            norm=map_norm,
+            shading="flat",
+            rasterized=True,
+        )
+        axis.set(
+            xlim=(shift_edges[0], shift_edges[-1]),
+            ylim=(lambda_edges[0], lambda_edges[-1]),
+            xlabel="shift",
+            title=rf"$\langle\psi_{index}\rangle$",
+        )
+        style_axis(axis)
+        panel_label(axis, label, inside=axis is axis_f)
+    axis_d.set_ylabel(r"$\lambda$")
+    axis_e.tick_params(labelleft=False)
+    spectral_colorbar = figure.colorbar(image, cax=spectral_colorbar_axis)
+    spectral_colorbar.set_label(r"$\langle\psi_i\rangle$", labelpad=5)
+    ticks, _ = analysis.symmetric_ticks(color_limit)
+    spectral_colorbar.set_ticks(ticks)
+    spectral_colorbar.set_ticklabels([f"{value:.2g}" for value in ticks])
+    spectral_colorbar.ax.yaxis.set_ticks_position("right")
+    spectral_colorbar.ax.yaxis.set_label_position("right")
+    spectral_colorbar.ax.tick_params(pad=3, width=MATPLOTLIB_AXIS_LINEWIDTH)
+
+    figure_details: dict[str, Any] = {
+        "font_family": font_name,
+        "lato_available": lato_available,
+        "state_lambdas": state_lambdas.tolist(),
+        "state_shifts": state_shifts.tolist(),
+        "spectral_color_limit": color_limit,
+        "bottom_right": bottom_right,
+    }
+    if bottom_right == "topology":
+        if topology_path is None:
+            raise ValueError("A topology data path is required when Panel f is topology.")
+        topology = build_topology_state_map(topology_path, state_lambdas, state_shifts)
+        draw_topology_map(axis_f, topology, shift_edges, lambda_edges)
+        axis_f.set(
+            xlim=(shift_edges[0], shift_edges[-1]),
+            ylim=(lambda_edges[0], lambda_edges[-1]),
+            xlabel="shift",
+            title="Topology",
+        )
+        axis_f.tick_params(labelleft=False)
+        style_axis(axis_f)
+        panel_label(axis_f, "f.)", inside=True)
+        topology_legend(topology_legend_axis)
+        figure_details["topology"] = {
+            "source": str(topology_path.resolve()),
+            "categories": list(TOPOLOGY_CATEGORIES),
+            "excluded_categories": ["tree"],
+            "colors": TOPOLOGY_COLORS,
+            "blend": "top-two fractions with deterministic MD5 pair midpoint and quadratic Bezier mix",
+            "bend": BEND,
+            "missing_state_color": MISSING_TOPOLOGY_COLOR,
+        }
+    else:
+        topology_legend_axis.set_axis_off()
+        axis_f.tick_params(labelleft=False)
+    figure.canvas.draw()
+    for scatter_axis, colorbar_axis in (
+        (axis_b, lambda_colorbar_axis), (axis_c, shift_colorbar_axis)
+    ):
+        scatter_position = scatter_axis.get_position()
+        colorbar_position = colorbar_axis.get_position()
+        colorbar_axis.set_position(
+            [colorbar_position.x0, scatter_position.y0, colorbar_position.width, scatter_position.height]
+        )
+    return figure, axis_a, figure_details
 
 
 def output_paths(output_base: Path) -> dict[str, Path]:
@@ -548,112 +612,73 @@ def output_paths(output_base: Path) -> dict[str, Path]:
     }
 
 
-def build_figure(
-    coordinates: pd.DataFrame,
-    descriptor_panels: list[dict[str, str]],
-    lambda_limits: tuple[float, float],
-) -> plt.Figure:
-    sequential_cmap, diverging_cmap = choose_colormaps()
-    plt.rcParams.update(
+def svg_canvas_size(svg_root: element_tree.Element) -> tuple[float, float]:
+    view_box = svg_root.attrib.get("viewBox")
+    if not view_box:
+        raise ValueError("Matplotlib SVG is missing a viewBox required for Panel-a placement.")
+    values = [float(value) for value in view_box.replace(",", " ").split()]
+    if len(values) != 4:
+        raise ValueError(f"Unexpected SVG viewBox: {view_box}")
+    return values[2], values[3]
+
+
+def compose_panel_a_svg(
+    base_svg: Path,
+    panel_svg: Path,
+    panel_bbox: Any,
+    font_name: str,
+    add_label: bool,
+    output_svg: Path,
+) -> None:
+    if not panel_svg.is_file():
+        raise FileNotFoundError(f"Panel-a SVG does not exist: {panel_svg}")
+    base_tree = element_tree.parse(base_svg)
+    base_root = base_tree.getroot()
+    panel_root = copy.deepcopy(element_tree.parse(panel_svg).getroot())
+    canvas_width, canvas_height = svg_canvas_size(base_root)
+    inset_x = panel_bbox.x0 + 0.025 * panel_bbox.width
+    inset_y = panel_bbox.y0 + 0.02 * panel_bbox.height
+    inset_width = 0.95 * panel_bbox.width
+    inset_height = 0.95 * panel_bbox.height
+    panel_root.attrib.update(
         {
-            "font.size": 8,
-            "axes.labelsize": 8,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-            "axes.linewidth": 0.7,
-            "pdf.fonttype": 42,
-            "ps.fonttype": 42,
+            "x": f"{inset_x * canvas_width:.6f}",
+            "y": f"{(1.0 - inset_y - inset_height) * canvas_height:.6f}",
+            "width": f"{inset_width * canvas_width:.6f}",
+            "height": f"{inset_height * canvas_height:.6f}",
+            "overflow": "hidden",
+            "preserveAspectRatio": "xMidYMid meet",
         }
     )
-    figure = plt.figure(figsize=(7.4, 6.0), facecolor="white")
-    outer = figure.add_gridspec(2, 1, height_ratios=(1.0, 1.03), hspace=0.48)
-    top = outer[0].subgridspec(1, 5, width_ratios=(1.38, 1.0, 0.055, 1.0, 0.055), wspace=0.62)
-    bottom = outer[1].subgridspec(1, 4, width_ratios=(1.0, 1.0, 1.0, 0.07), wspace=0.26)
-    axis_a = figure.add_subplot(top[0])
-    axis_b = figure.add_subplot(top[1])
-    lambda_colorbar_axis = figure.add_subplot(top[2])
-    axis_c = figure.add_subplot(top[3])
-    shift_colorbar_axis = figure.add_subplot(top[4])
-    map_axes = [figure.add_subplot(bottom[index]) for index in range(3)]
-    map_colorbar_axis = figure.add_subplot(bottom[3])
-
-    draw_panel_a(axis_a, descriptor_panels)
-    x_limits, y_limits = scatter_limits(coordinates)
-    x_values = coordinates["spectral_coordinate_1"].to_numpy(dtype=float)
-    y_values = coordinates["spectral_coordinate_2"].to_numpy(dtype=float)
-    lambda_values = coordinates["lambda"].to_numpy(dtype=float)
-    shift_values = coordinates["shift"].to_numpy(dtype=float)
-    lambda_norm = PowerNorm(gamma=LAMBDA_COLOR_GAMMA, vmin=LAMBDA_COLOR_LIMITS[0], vmax=LAMBDA_COLOR_LIMITS[1])
-    lambda_scatter = axis_b.scatter(
-        x_values,
-        y_values,
-        c=np.clip(lambda_values, *LAMBDA_COLOR_LIMITS),
-        cmap=sequential_cmap,
-        norm=lambda_norm,
-        s=4,
-        alpha=0.65,
-        linewidths=0,
-        rasterized=True,
-    )
-    shift_min, shift_max = float(shift_values.min()), float(shift_values.max())
-    if shift_min == shift_max:
-        shift_min -= 0.5
-        shift_max += 0.5
-    shift_scatter = axis_c.scatter(
-        x_values,
-        y_values,
-        c=shift_values,
-        cmap=sequential_cmap,
-        norm=Normalize(vmin=shift_min, vmax=shift_max),
-        s=4,
-        alpha=0.65,
-        linewidths=0,
-        rasterized=True,
-    )
-    for axis, letter in ((axis_b, "B"), (axis_c, "C")):
-        axis.set(xlim=x_limits, ylim=y_limits, xlabel="Spectral coordinate 1", ylabel="Spectral coordinate 2")
-        axis.grid(False)
-        add_panel_label(axis, letter)
-    lambda_colorbar = figure.colorbar(lambda_scatter, cax=lambda_colorbar_axis)
-    lambda_colorbar.set_label(r"$\lambda$")
-    lambda_colorbar.set_ticks(np.arange(0.0, 31.0, 5.0))
-    shift_colorbar = figure.colorbar(shift_scatter, cax=shift_colorbar_axis)
-    shift_colorbar.set_label("shift")
-
-    grids, map_lambdas, map_shifts = coordinate_state_grids(coordinates, lambda_limits)
-    value_limit = max(
-        float(np.nanmax(np.abs(grid.to_numpy(dtype=float)))) for grid in grids
-    )
-    value_limit = max(value_limit, 1e-12)
-    map_norm = TwoSlopeNorm(vmin=-value_limit, vcenter=0.0, vmax=value_limit)
-    map_cmap = diverging_cmap.copy()
-    map_cmap.set_bad(MISSING_CELL_COLOR)
-    shift_edges = cell_edges(map_shifts)
-    lambda_edges = cell_edges(map_lambdas)
-    map_artist = None
-    for index, (axis, grid, letter) in enumerate(zip(map_axes, grids, ("D", "E", "F")), start=1):
-        map_artist = axis.pcolormesh(
-            shift_edges,
-            lambda_edges,
-            np.ma.masked_invalid(grid.to_numpy(dtype=float)),
-            cmap=map_cmap,
-            norm=map_norm,
-            shading="flat",
-            rasterized=True,
+    base_root.append(panel_root)
+    if add_label:
+        text = element_tree.SubElement(
+            base_root,
+            f"{{{SVG_NAMESPACE}}}text",
+            {
+                "x": f"{panel_bbox.x0 * canvas_width:.6f}",
+                "y": f"{(1.0 - panel_bbox.y1) * canvas_height + 22:.6f}",
+                "font-family": font_name,
+                "font-size": str(analysis.TITLE_FONT),
+                "font-weight": "700",
+                "fill": "#000000",
+            },
         )
-        axis.set(xlim=(shift_edges[0], shift_edges[-1]), ylim=(lambda_edges[0], lambda_edges[-1]), xlabel="shift")
-        axis.set_title(f"Coordinate {index}", fontsize=8, pad=3)
-        axis.grid(False)
-        add_panel_label(axis, letter)
-        if index == 1:
-            axis.set_ylabel(r"$\lambda$")
-        else:
-            axis.tick_params(labelleft=False)
-    colorbar = figure.colorbar(map_artist, cax=map_colorbar_axis)
-    colorbar.set_label("Mean spectral coordinate")
-    colorbar.set_ticks([-value_limit, 0.0, value_limit])
-    colorbar.set_ticklabels([f"{-value_limit:.2g}", "0", f"{value_limit:.2g}"])
-    return figure
+        text.text = "a.)"
+    base_tree.write(output_svg, encoding="utf-8", xml_declaration=True)
+
+
+def export_with_inkscape(svg_path: Path, paths: dict[str, Path]) -> None:
+    inkscape = shutil.which("inkscape")
+    if inkscape is None:
+        raise RuntimeError(
+            "Vector Panel-a composition requires Inkscape for PDF/PNG export, but it is unavailable."
+        )
+    for command in (
+        [inkscape, str(svg_path), "--export-type=pdf", f"--export-filename={paths['pdf']}"],
+        [inkscape, str(svg_path), "--export-type=png", "--export-dpi=400", f"--export-filename={paths['png']}"],
+    ):
+        subprocess.run(command, check=True, capture_output=True, text=True)
 
 
 def write_sidecar(
@@ -661,27 +686,50 @@ def write_sidecar(
     results_dir: Path,
     metadata: dict[str, Any],
     source: dict[str, str],
-    selected_groups: list[str],
-    selected_columns: list[str],
-    group_source: str,
-    descriptor_panels: list[dict[str, str]],
+    groups: list[str],
+    columns: list[str],
     orientations: list[dict[str, Any]],
-    output_paths_map: dict[str, Path],
+    panel_a_svg: Path | None,
+    panel_a_svg_has_label: bool,
+    details: dict[str, Any],
+    paths: dict[str, Path],
 ) -> None:
     contents = {
         "input_results_directory": str(results_dir.resolve()),
-        "input_data_file": source["path"] if source["mode"] == "reconstructed_from_pickle" else None,
+        "input_data_file": metadata["input_data_path"],
         "coordinate_source": source,
         "feature_set": FEATURE_SET,
-        "selected_feature_groups": selected_groups,
-        "selected_feature_columns": selected_columns,
-        "feature_group_source": group_source,
-        "descriptor_panels": descriptor_panels,
+        "selected_feature_groups": groups,
+        "selected_feature_columns": columns,
+        "crystallinity_mode": metadata["crystallinity_features"]["mode"],
+        "crystallinity_features_absent": not metadata["crystallinity_features"]["active_columns"],
         "k": int(metadata["selected_k"]),
         "random_seed": int(metadata["random_seed"]),
-        "spectral_coordinate_indices": list(range(1, COORDINATE_COUNT + 1)),
+        "spectral_coordinate_indices": list(DISPLAY_COORDINATES),
+        "coordinate_definition": "First non-trivial coordinates of the detailed graph-Laplacian spectral embedding.",
         "coordinate_orientation": orientations,
-        "output_files": {name: str(output.resolve()) for name, output in output_paths_map.items() if name != "json"},
+        "panel_a": {
+            "source": str(panel_a_svg.resolve()) if panel_a_svg else None,
+            "is_external_svg": panel_a_svg is not None,
+            "svg_contains_panel_label": panel_a_svg_has_label,
+            "panel_label_added_by_main_figure": not panel_a_svg_has_label,
+        },
+        "analysis_style": {
+            "lambda_gamma": analysis.LAMBDA_COLOR_GAMMA,
+            "lambda_limits": [analysis.LAMBDA_COLOR_VMIN, analysis.LAMBDA_COLOR_VMAX],
+            "scatter_colormap": "cmr.lilac",
+            "spectral_colormap": "cmr.pride",
+            "missing_state_color": analysis.MISSING_CELL_COLOR,
+            "marker_size": analysis.EMBEDDING_MARKER_SIZE,
+            "marker_opacity": analysis.EMBEDDING_MARKER_OPACITY,
+            "tick_font_size": analysis.TICK_FONT,
+            "title_font_size": analysis.TITLE_FONT,
+            "matplotlib_axis_linewidth": MATPLOTLIB_AXIS_LINEWIDTH,
+        },
+        "figure": details,
+        "output_files": {
+            name: str(file_path.resolve()) for name, file_path in paths.items() if name != "json"
+        },
         "output_timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
     with path.open("w", encoding="utf-8") as handle:
@@ -690,51 +738,69 @@ def write_sidecar(
 
 def main() -> None:
     args = parse_args()
-    data_dir = resolve_data_directory(args.results_dir)
-    results_dir = data_dir.parent if data_dir.name == "data" else data_dir
-    metadata = load_run_metadata(data_dir)
-    selected_k = validate_run_parameters(metadata, args)
-    selected_groups, selected_columns, group_source = selected_feature_definition(metadata)
-    panel_groups = selected_groups or infer_groups_from_columns(selected_columns)
-    descriptor_panels = descriptor_panels_for_groups(panel_groups)
-    coordinates, source = load_coordinates(
-        data_dir,
-        metadata,
-        args,
-        selected_k,
-        selected_groups,
-        selected_columns,
+    results_dir, data_dir = resolve_data_directory(args.results_dir)
+    metadata = load_metadata(data_dir)
+    groups, columns = validate_run(metadata, args)
+    input_pickle = Path(metadata["input_data_path"])
+    if not input_pickle.is_file():
+        raise FileNotFoundError(f"Recorded input pickle does not exist: {input_pickle}")
+    coordinates, coordinate_source = load_coordinates(
+        data_dir, metadata, groups, columns, args
     )
     coordinates, orientations = orient_coordinates(coordinates)
-    lambda_limits_raw = metadata["state_lambda_plot_limits"]
-    if not isinstance(lambda_limits_raw, list) or len(lambda_limits_raw) != 2:
-        raise ValueError("run_metadata.json state_lambda_plot_limits must contain two values.")
-    lambda_limits = (float(lambda_limits_raw[0]), float(lambda_limits_raw[1]))
+    lambda_limits = tuple(float(value) for value in metadata["state_lambda_plot_limits"])
+    panel_a_svg = args.panel_a_svg.expanduser().resolve() if args.panel_a_svg else None
+    topology_path = None
+    if args.bottom_right == "topology":
+        topology_path = (args.topology_data_path or DEFAULT_TOPOLOGY_DATA_PATH).expanduser().resolve()
+        if not topology_path.is_file():
+            raise FileNotFoundError(f"Topology data file does not exist: {topology_path}")
     paths = output_paths(args.output.expanduser().resolve())
-    existing_outputs = [path for path in paths.values() if path.exists()]
-    if existing_outputs and not args.overwrite:
+    existing = [path for path in paths.values() if path.exists()]
+    if existing and not args.overwrite:
         raise FileExistsError(
-            "Refusing to overwrite existing outputs; use --overwrite to replace: "
-            + ", ".join(str(path) for path in existing_outputs)
+            "Refusing to overwrite existing figure outputs; use --overwrite: "
+            + ", ".join(str(path) for path in existing)
         )
-    args.output.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-    figure = build_figure(coordinates, descriptor_panels, lambda_limits)
+    paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
+    figure, axis_a, details = build_figure(
+        coordinates,
+        lambda_limits,
+        topology_path,
+        args.bottom_right,
+        panel_a_svg is not None,
+    )
     try:
-        figure.savefig(paths["pdf"], bbox_inches="tight")
-        figure.savefig(paths["svg"], bbox_inches="tight")
-        figure.savefig(paths["png"], dpi=400, bbox_inches="tight")
+        if panel_a_svg is None:
+            figure.savefig(paths["svg"], bbox_inches="tight")
+            figure.savefig(paths["pdf"], bbox_inches="tight")
+            figure.savefig(paths["png"], dpi=400, bbox_inches="tight")
+        else:
+            with tempfile.TemporaryDirectory(prefix="main_spectral_embedding_") as temporary:
+                base_svg = Path(temporary) / "data_panels.svg"
+                figure.savefig(base_svg, format="svg")
+                compose_panel_a_svg(
+                    base_svg,
+                    panel_a_svg,
+                    axis_a.get_position(),
+                    details["font_family"],
+                    not args.panel_a_svg_has_label,
+                    paths["svg"],
+                )
+            export_with_inkscape(paths["svg"], paths)
     finally:
         plt.close(figure)
     write_sidecar(
         paths["json"],
         results_dir,
         metadata,
-        source,
-        panel_groups,
-        selected_columns,
-        group_source,
-        descriptor_panels,
+        coordinate_source,
+        groups,
+        columns,
         orientations,
+        panel_a_svg,
+        args.panel_a_svg_has_label,
+        details,
         paths,
     )
     print("Created:")
@@ -745,5 +811,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (FileNotFoundError, FileExistsError, RuntimeError, ValueError) as error:
+    except (FileNotFoundError, FileExistsError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"error: {error}") from error
