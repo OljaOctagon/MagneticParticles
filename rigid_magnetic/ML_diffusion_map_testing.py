@@ -411,6 +411,23 @@ def feature_columns_for_groups(
     return columns
 
 
+def standardized_feature_matrices(
+    df: pd.DataFrame,
+    feature_groups: dict[str, list[str]],
+    feature_set_groups: dict[str, list[str]],
+) -> tuple[dict[str, np.ndarray], dict[str, list[str]]]:
+    """Select named feature groups and standardize each detailed feature matrix."""
+    matrices = {}
+    feature_columns = {}
+    for feature_set, groups in feature_set_groups.items():
+        columns = feature_columns_for_groups(feature_groups, groups)
+        feature_columns[feature_set] = columns
+        matrices[feature_set] = StandardScaler().fit_transform(
+            df[columns].to_numpy(dtype=float)
+        )
+    return matrices, feature_columns
+
+
 def state_stat_table(metadata: pd.DataFrame, values: np.ndarray) -> pd.DataFrame:
     return (
         pd.DataFrame(
@@ -424,6 +441,26 @@ def state_stat_table(metadata: pd.DataFrame, values: np.ndarray) -> pd.DataFrame
         .agg(mean="mean", std="std", count="count")
         .reset_index()
     )
+
+
+def embedding_coordinate_table(
+    metadata: pd.DataFrame,
+    embedding: np.ndarray,
+    feature_set: str,
+    selected_k: int,
+) -> pd.DataFrame:
+    """Return per-configuration spectral coordinates for a feature specification."""
+    if embedding.ndim != 2 or embedding.shape[0] != len(metadata):
+        raise ValueError("Embedding rows must match the metadata row count.")
+    if embedding.shape[1] < 3:
+        raise ValueError("Embedding must contain at least three non-trivial coordinates.")
+
+    coordinates = metadata[META_COLUMNS].reset_index(drop=True).copy()
+    coordinates["k"] = selected_k
+    coordinates["feature_set"] = feature_set
+    for index in range(embedding.shape[1]):
+        coordinates[f"spectral_coordinate_{index + 1}"] = embedding[:, index]
+    return coordinates
 
 
 def state_grid(
@@ -480,6 +517,9 @@ def apply_coloraxis(
     cmin: float,
     cmax: float,
     title: str,
+    colorbar_x: float = 1.02,
+    tickvals: list[float] | None = None,
+    ticktext: list[str] | None = None,
 ) -> None:
     fig.update_layout(
         **{
@@ -489,11 +529,15 @@ def apply_coloraxis(
                 cmax=cmax,
                 colorbar=dict(
                     title=dict(text=title, side="right"),
-                    thickness=18,
+                    thickness=12,
                     len=0.78,
-                    x=1.02,
+                    x=colorbar_x,
+                    xanchor="left",
+                    xpad=0,
                     y=0.5,
-                    tickfont=dict(size=TICK_FONT),
+                    tickfont=dict(size=11),
+                    tickvals=tickvals,
+                    ticktext=ticktext,
                 ),
             )
         }
@@ -623,7 +667,6 @@ def build_initial_embedding_plots(
             vector_counts.append(
                 state_grid(stats, "count", state_lambdas, state_shifts)
             )
-        vmax = max(finite_abs_max(*vector_grids), 1e-12)
         state_fig = make_subplots(
             rows=1,
             cols=3,
@@ -634,27 +677,43 @@ def build_initial_embedding_plots(
             ],
             horizontal_spacing=0.08,
         )
+        vector_limits = []
+        for grid in vector_grids:
+            values = grid.to_numpy(dtype=float)
+            finite_values = values[np.isfinite(values)]
+            limit = float(np.max(np.abs(finite_values))) if finite_values.size else 1.0
+            vector_limits.append(max(limit, 1e-12))
+
         for column, (mean_grid, count_grid) in enumerate(
             zip(vector_grids, vector_counts), start=1
         ):
+            coloraxis = "coloraxis" if column == 1 else f"coloraxis{column}"
             state_fig.add_trace(
                 heatmap_trace(
                     mean_grid,
                     count_grid,
-                    coloraxis="coloraxis",
+                    coloraxis=coloraxis,
                     quantity_label=f"mean non-trivial spectral vector {column}",
                 ),
                 row=1,
                 col=column,
             )
-        apply_coloraxis(
-            state_fig,
-            coloraxis="coloraxis",
-            colorscale=pride,
-            cmin=-vmax,
-            cmax=vmax,
-            title="Mean non-trivial spectral vector",
-        )
+        for column, limit in enumerate(vector_limits, start=1):
+            coloraxis = "coloraxis" if column == 1 else f"coloraxis{column}"
+            ticks = [-limit, 0.0, limit]
+            axis_name = "xaxis" if column == 1 else f"xaxis{column}"
+            axis_domain = getattr(state_fig.layout, axis_name).domain
+            apply_coloraxis(
+                state_fig,
+                coloraxis=coloraxis,
+                colorscale=pride,
+                cmin=-limit,
+                cmax=limit,
+                title="Mean value",
+                colorbar_x=float(axis_domain[1]) + 0.006,
+                tickvals=ticks,
+                ticktext=[f"{tick:.3g}" for tick in ticks],
+            )
         style_state_figure(
             state_fig,
             f"{label}: first three non-trivial spectral embedding vectors, k={selected_k}",
@@ -1451,8 +1510,10 @@ def write_data_outputs(
     row_count: int,
     feature_columns: dict[str, list[str]],
     feature_set_groups: dict[str, list[str]],
+    feature_groups: dict[str, list[str]],
     feature_group_sizes: dict[str, int],
     crystallinity_info: dict[str, object],
+    reduced_coordinate_data: pd.DataFrame,
     matching: pd.DataFrame,
     connectivity: pd.DataFrame,
     spectrum: pd.DataFrame,
@@ -1472,6 +1533,9 @@ def write_data_outputs(
     difference_data.to_csv(data_dir / "spectral_differences.csv", index=False)
     count_data.to_csv(data_dir / "state_point_counts.csv", index=False)
     comparison.to_csv(data_dir / "embedding_comparison.csv", index=False)
+    reduced_coordinate_data.to_csv(
+        data_dir / f"reduced_embedding_coordinates_k{selected_k}.csv", index=False
+    )
 
     summary_rows = []
     for feature_set in feature_set_groups:
@@ -1502,6 +1566,8 @@ def write_data_outputs(
         "graph_k_values": graph_k_values,
         "n_configurations": row_count,
         "state_lambda_plot_limits": [STATE_LAMBDA_MIN, STATE_LAMBDA_MAX],
+        "feature_set_groups": feature_set_groups,
+        "feature_groups": feature_groups,
         "feature_columns": feature_columns,
         "all_features_count": len(feature_columns["all_features"]),
         "feature_group_sizes": feature_group_sizes,
@@ -1583,14 +1649,10 @@ def main() -> None:
         shift_limits,
     )
 
-    matrices = {}
-    feature_columns = {}
-    for feature_set, groups in feature_set_groups.items():
-        columns = feature_columns_for_groups(feature_groups, groups)
-        feature_columns[feature_set] = columns
-        matrices[feature_set] = StandardScaler().fit_transform(
-            df[columns].to_numpy(dtype=float)
-        )
+    matrices, feature_columns = standardized_feature_matrices(
+        df, feature_groups, feature_set_groups
+    )
+    for feature_set, columns in feature_columns.items():
         logging.info("Detailed feature set %s: %d features", feature_set, len(columns))
 
     graph_k_values = sorted(set(DEFAULT_GRAPH_K_VALUES) | {args.k})
@@ -1617,6 +1679,12 @@ def main() -> None:
         pride,
     )
     comparison = create_embedding_comparison(embeddings, args.k)
+    reduced_coordinate_data = embedding_coordinate_table(
+        sample_metadata,
+        embeddings[("reduced_no_global", args.k)],
+        "reduced_no_global",
+        args.k,
+    )
     save_detailed_scatters(
         df,
         sample_metadata,
@@ -1636,8 +1704,10 @@ def main() -> None:
         len(df),
         feature_columns,
         feature_set_groups,
+        feature_groups,
         {name: len(columns) for name, columns in feature_groups.items()},
         crystallinity_info,
+        reduced_coordinate_data,
         matching,
         connectivity,
         spectrum,
