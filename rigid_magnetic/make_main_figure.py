@@ -55,7 +55,8 @@ TITLE_FONT_SIZE = 14
 TITLE_PAD = 5
 PANEL_LABEL_OFFSET = 0.008
 # Visible artwork occupies this region of the 1600 x 1000 source SVG canvas.
-PANEL_A_VISIBLE_VIEWBOX = (150.0, 5.0, 1220.0, 985.0)
+PANEL_A_VISIBLE_VIEWBOX = (150.0, -5.0, 1220.0, 995.0)
+STATE_COLORBAR_RIGHT_SHIFT = 0.015
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 element_tree.register_namespace("", SVG_NAMESPACE)
 
@@ -321,7 +322,13 @@ def build_figure(coordinates: pd.DataFrame, lambda_limits: tuple[float, float], 
     c_sub = c_panel[1].subgridspec(1, 2, width_ratios=(1, 0.040), wspace=0.055)
     axis_b, lambda_cax = figure.add_subplot(b_sub[0]), figure.add_subplot(b_sub[1])
     axis_c, shift_cax = figure.add_subplot(c_sub[0]), figure.add_subplot(c_sub[1])
-    axis_d, axis_e, axis_f = figure.add_subplot(bottom[0]), figure.add_subplot(bottom[1]), figure.add_subplot(bottom[2])
+    d_panel = bottom[0].subgridspec(1, 2, width_ratios=(1, 0.048), wspace=0.18)
+    e_panel = bottom[1].subgridspec(1, 2, width_ratios=(1, 0.048), wspace=0.18)
+    f_panel = bottom[2].subgridspec(1, 2, width_ratios=(1, 0.048), wspace=0.18)
+    axis_d, d_cax = figure.add_subplot(d_panel[0]), figure.add_subplot(d_panel[1])
+    axis_e, e_cax = figure.add_subplot(e_panel[0]), figure.add_subplot(e_panel[1])
+    axis_f, f_spacer = figure.add_subplot(f_panel[0]), figure.add_subplot(f_panel[1])
+    f_spacer.set_axis_off()
     figure.subplots_adjust(left=0.052, right=0.965, top=0.94, bottom=0.105)
     containers = {"a": top[0].get_position(figure), "b": top[1].get_position(figure), "c": top[2].get_position(figure), "d": bottom[0].get_position(figure), "e": bottom[1].get_position(figure), "f": bottom[2].get_position(figure)}
     heading_boxes = {"a": a_panel[0].get_position(figure), "b": b_panel[0].get_position(figure), "c": c_panel[0].get_position(figure)}
@@ -345,10 +352,12 @@ def build_figure(coordinates: pd.DataFrame, lambda_limits: tuple[float, float], 
     lambda_bar.set_label(r"$\lambda$", fontsize=AXIS_LABEL_FONT_SIZE, labelpad=3)
     lambda_bar.set_ticks(np.arange(0, 31, 5))
     lambda_bar.ax.yaxis.set_ticks_position("left")
-    lambda_bar.ax.yaxis.set_label_position("left")
+    lambda_bar.ax.yaxis.set_label_position("right")
     lambda_bar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=MATPLOTLIB_AXIS_LINEWIDTH)
     shift_bar = figure.colorbar(shift_scatter, cax=shift_cax)
     shift_bar.set_label("shift", fontsize=AXIS_LABEL_FONT_SIZE, labelpad=3)
+    shift_bar.ax.yaxis.set_ticks_position("left")
+    shift_bar.ax.yaxis.set_label_position("right")
     shift_bar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=MATPLOTLIB_AXIS_LINEWIDTH)
 
     indices = (1, 2, 3) if bottom_right == "psi3" else (1, 2)
@@ -358,10 +367,10 @@ def build_figure(coordinates: pd.DataFrame, lambda_limits: tuple[float, float], 
     spectral_cmap.set_bad(analysis.MISSING_CELL_COLOR)
     x_edges, y_edges = cell_edges(state_shifts), cell_edges(state_lambdas)
     map_axes = ((axis_d, 1), (axis_e, 2)) + (((axis_f, 3),) if bottom_right == "psi3" else ())
-    image = None
+    map_images = {}
     for axis, index in map_axes:
-        image = axis.pcolormesh(x_edges, y_edges, np.ma.masked_invalid(grids[index].to_numpy(float)), cmap=spectral_cmap, norm=TwoSlopeNorm(vmin=-color_limit, vcenter=0, vmax=color_limit), shading="flat", rasterized=True)
-        axis.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title=rf"$\langle\psi_{index}\rangle$")
+        map_images[index] = axis.pcolormesh(x_edges, y_edges, np.ma.masked_invalid(grids[index].to_numpy(float)), cmap=spectral_cmap, norm=TwoSlopeNorm(vmin=-color_limit, vcenter=0, vmax=color_limit), shading="flat", rasterized=True)
+        axis.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title=rf"$\langle\psi_{index}\rangle$ state diagram")
         axis.set_title(axis.get_title(), fontsize=TITLE_FONT_SIZE, fontweight="normal", pad=TITLE_PAD)
         style_axis(axis, MAP_TICK_FONT_SIZE)
     axis_d.set_ylabel(r"$\lambda$")
@@ -373,7 +382,7 @@ def build_figure(coordinates: pd.DataFrame, lambda_limits: tuple[float, float], 
             raise ValueError("Topology data is required for the default Panel f.")
         topology = build_topology_state_map(topology_path, state_lambdas, state_shifts)
         draw_topology_map(axis_f, topology, x_edges, y_edges)
-        axis_f.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title="Topology")
+        axis_f.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title="Connectivity state diagram")
         axis_f.set_title(axis_f.get_title(), fontsize=TITLE_FONT_SIZE, fontweight="normal", pad=TITLE_PAD)
         axis_f.tick_params(labelleft=False)
         style_axis(axis_f, MAP_TICK_FONT_SIZE)
@@ -387,22 +396,31 @@ def build_figure(coordinates: pd.DataFrame, lambda_limits: tuple[float, float], 
         scatter_bbox, color_bbox = scatter_axis.get_position(), color_axis.get_position()
         color_axis.set_position([color_bbox.x0, scatter_bbox.y0, color_bbox.width, scatter_bbox.height])
     figure.canvas.draw()
-    e_box, f_box = axis_e.get_position(), axis_f.get_position()
-    gap = f_box.x0 - e_box.x1
-    cbar_width = min(0.011, gap * 0.24)
-    spectral_cax = figure.add_axes([e_box.x1 + gap * 0.10, e_box.y0, cbar_width, e_box.height])
-    spectral_bar = figure.colorbar(image, cax=spectral_cax)
-    spectral_bar.set_label(r"$\langle\psi_i\rangle$", fontsize=AXIS_LABEL_FONT_SIZE, labelpad=3)
     ticks, _ = analysis.symmetric_ticks(color_limit)
-    spectral_bar.set_ticks(ticks)
-    spectral_bar.set_ticklabels([f"{-round(color_limit, 3):.3f}", "0", f"{round(color_limit, 3):.3f}"])
-    spectral_bar.ax.yaxis.set_ticks_position("right")
-    spectral_bar.ax.yaxis.set_label_position("right")
-    spectral_bar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=MATPLOTLIB_AXIS_LINEWIDTH)
+    displayed_ticks = [f"{-round(color_limit, 3):.3f}", "0", f"{round(color_limit, 3):.3f}"]
+    state_colorbars = []
+    for coordinate, color_axis, map_axis in ((1, d_cax, axis_d), (2, e_cax, axis_e)):
+        map_box, color_box = map_axis.get_position(), color_axis.get_position()
+        color_axis.set_position(
+            [
+                color_box.x0 + STATE_COLORBAR_RIGHT_SHIFT,
+                map_box.y0,
+                color_box.width,
+                map_box.height,
+            ]
+        )
+        colorbar = figure.colorbar(map_images[coordinate], cax=color_axis)
+        colorbar.set_label(rf"$\langle\psi_{coordinate}\rangle$", fontsize=AXIS_LABEL_FONT_SIZE, labelpad=3)
+        colorbar.set_ticks(ticks)
+        colorbar.set_ticklabels(displayed_ticks)
+        colorbar.ax.yaxis.set_ticks_position("left")
+        colorbar.ax.yaxis.set_label_position("right")
+        colorbar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=MATPLOTLIB_AXIS_LINEWIDTH)
+        state_colorbars.append(colorbar)
     labels = add_panel_labels(figure, containers)
     headings = add_top_headings(figure, heading_boxes)
     checks = layout_checks(figure, containers, axes, labels, headings)
-    details.update({"panel_containers": {name: bbox_record(box) for name, box in containers.items()}, "principal_axes": {name: bbox_record(axis.get_position()) for name, axis in axes.items()}, "panel_label_positions": labels, "top_heading_positions": headings, "spectral_colorbar_axes": bbox_record(spectral_cax.get_position()), "layout_checks_px": checks, "grid_spacing": {"top_row_wspace": 0.19, "bottom_row_wspace": 0.16, "outer_hspace": 0.30, "scatter_colorbar_wspace": 0.055}, "spectral_colorbar": {"actual_limit": color_limit, "displayed_tick_labels": [f"{-round(color_limit, 3):.3f}", "0", f"{round(color_limit, 3):.3f}"]}, "font_sizes": {"panel_labels": PANEL_LABEL_FONT_SIZE, "top_headings": TOP_HEADING_FONT_SIZE, "axis_labels": AXIS_LABEL_FONT_SIZE, "scatter_ticks": SCATTER_TICK_FONT_SIZE, "map_ticks": MAP_TICK_FONT_SIZE, "colorbar_ticks": COLORBAR_TICK_FONT_SIZE, "titles": TITLE_FONT_SIZE}})
+    details.update({"panel_containers": {name: bbox_record(box) for name, box in containers.items()}, "principal_axes": {name: bbox_record(axis.get_position()) for name, axis in axes.items()}, "panel_label_positions": labels, "top_heading_positions": headings, "state_colorbar_axes": {"psi_1": bbox_record(d_cax.get_position()), "psi_2": bbox_record(e_cax.get_position())}, "layout_checks_px": checks, "grid_spacing": {"top_row_wspace": 0.19, "bottom_row_wspace": 0.16, "outer_hspace": 0.30, "scatter_colorbar_wspace": 0.055, "state_colorbar_wspace": 0.18, "state_colorbar_right_shift": STATE_COLORBAR_RIGHT_SHIFT}, "spectral_colorbars": {"actual_limit": color_limit, "displayed_tick_labels": displayed_ticks, "labels": [r"$\langle\psi_1\rangle$", r"$\langle\psi_2\rangle$"]}, "font_sizes": {"panel_labels": PANEL_LABEL_FONT_SIZE, "top_headings": TOP_HEADING_FONT_SIZE, "axis_labels": AXIS_LABEL_FONT_SIZE, "scatter_ticks": SCATTER_TICK_FONT_SIZE, "map_ticks": MAP_TICK_FONT_SIZE, "colorbar_ticks": COLORBAR_TICK_FONT_SIZE, "titles": TITLE_FONT_SIZE}})
     return figure, axis_a, details
 
 
@@ -423,6 +441,14 @@ def compose_panel_a_svg(base_svg: Path, panel_svg: Path, panel_box: Any, output_
     base_tree = element_tree.parse(base_svg)
     base_root = base_tree.getroot()
     panel_root = copy.deepcopy(element_tree.parse(panel_svg).getroot())
+    for element in panel_root.iter():
+        if element.tag.endswith("style") and element.text:
+            # Enlarge only the source SVG's text styles; all geometry remains untouched.
+            element.text = (
+                element.text.replace("font-size:30px", "font-size:38px")
+                .replace("font-size:22px", "font-size:28px")
+                .replace("font-size:46px", "font-size:58px")
+            )
     panel_root.attrib["viewBox"] = " ".join(f"{value:g}" for value in PANEL_A_VISIBLE_VIEWBOX)
     width, height = svg_canvas_size(base_root)
     inset_x, inset_y = panel_box.x0 + 0.005 * panel_box.width, panel_box.y0 + 0.01 * panel_box.height
