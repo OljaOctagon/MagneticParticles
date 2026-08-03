@@ -11,6 +11,7 @@ import subprocess
 import sys
 import warnings
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 
 import cmasher as cmr
@@ -22,6 +23,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.linalg import subspace_angles
 from scipy.optimize import linear_sum_assignment
+from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, laplacian
 from scipy.sparse.linalg import eigsh
 from scipy.spatial import procrustes
@@ -49,6 +51,16 @@ SEED = 42
 N_COMPONENTS = 10
 N_COMPONENTS_TO_ANALYZE = 5
 N_MATCHED_COMPONENTS = 3
+ABLATION_GROUPS = (
+    "global",
+    "orientation",
+    "Rg",
+    "gofr",
+    "crystallinity_coarse_histogram_features",
+)
+ABLATION_NONTRIVIAL_EIGENPAIRS = 10
+ABLATION_DEVELOPMENT_ROWS = 320
+ABLATION_DEVELOPMENT_REPLICAS_PER_STATE = 5
 DEFAULT_GRAPH_K_VALUES = (5, 10, 20, 32, 50)
 STATE_LAMBDA_MIN = 0.0
 STATE_LAMBDA_MAX = 30.0
@@ -127,9 +139,29 @@ def parse_args() -> argparse.Namespace:
         default="scalars",
         help="Crystallinity representation for all_features (default: scalars).",
     )
+    parser.add_argument(
+        "--study",
+        choices=("standard", "full-group-ablation"),
+        default="standard",
+        help="Analysis to run (default: standard).",
+    )
+    parser.add_argument(
+        "--ablation-scope",
+        choices=("development", "full"),
+        default="development",
+        help="Row scope for full-group-ablation; development is the safe default.",
+    )
+    parser.add_argument(
+        "--ablation-development-rows",
+        type=int,
+        default=ABLATION_DEVELOPMENT_ROWS,
+        help=f"Rows retained in development ablations (default: {ABLATION_DEVELOPMENT_ROWS}).",
+    )
     args = parser.parse_args()
     if args.k <= 0:
         parser.error("--k must be a positive integer.")
+    if args.ablation_development_rows <= 0:
+        parser.error("--ablation-development-rows must be a positive integer.")
     return args
 
 
@@ -429,6 +461,194 @@ def standardized_feature_matrices(
     return matrices, feature_columns
 
 
+def group_ablation_feature_sets() -> dict[str, list[str]]:
+    """Return all non-empty combinations of the five declared ablation groups."""
+    feature_sets = {}
+    for count in range(1, len(ABLATION_GROUPS) + 1):
+        for group_tuple in combinations(ABLATION_GROUPS, count):
+            key = "__".join(group_tuple)
+            feature_sets[key] = list(group_tuple)
+    return feature_sets
+
+
+def development_ablation_feature_sets(
+    all_feature_sets: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Return a compact regression set spanning every requested plot category."""
+    selected = [
+        *(ablation_feature_set_key((group,)) for group in ABLATION_GROUPS),
+        ablation_feature_set_key(("orientation", "gofr")),
+        ablation_feature_set_key(ABLATION_GROUPS),
+        *(
+            ablation_feature_set_key(("orientation", "gofr", group))
+            for group in ("global", "Rg", "crystallinity_coarse_histogram_features")
+        ),
+    ]
+    return {key: all_feature_sets[key] for key in dict.fromkeys(selected)}
+
+
+def development_ablation_subset(df: pd.DataFrame, max_rows: int) -> pd.DataFrame:
+    """Select evenly spaced state points with balanced, rotating replica coverage."""
+    if len(df) <= max_rows:
+        return df.reset_index(drop=True)
+    state_indices = list(df.groupby(["lambda", "shift"], sort=True).indices.values())
+    minimum_state_size = min(len(indices) for indices in state_indices)
+    replicas_per_state = min(
+        ABLATION_DEVELOPMENT_REPLICAS_PER_STATE,
+        minimum_state_size,
+        max_rows,
+    )
+    state_count = min(len(state_indices), max_rows // replicas_per_state)
+    if state_count == 0:
+        raise ValueError("Development ablation subset cannot select any state points.")
+    extra_rows = max_rows - state_count * replicas_per_state
+    state_positions = np.linspace(0, len(state_indices) - 1, state_count, dtype=int)
+    selected_indices = []
+    for selection_index, state_position in enumerate(state_positions):
+        ordered_indices = sorted(
+            state_indices[state_position], key=lambda index: str(df.iloc[index]["file_id"])
+        )
+        requested = replicas_per_state + (selection_index < extra_rows)
+        if requested > len(ordered_indices):
+            raise ValueError(
+                "Development ablation subset requested more replicas than a selected "
+                f"state provides: {requested} > {len(ordered_indices)}."
+            )
+        rotation = selection_index % len(ordered_indices)
+        selected_indices.extend(
+            (ordered_indices[rotation:] + ordered_indices[:rotation])[:requested]
+        )
+    return df.iloc[sorted(selected_indices)].reset_index(drop=True)
+
+
+def build_ablation_graph(matrix: np.ndarray, neighbor_count: int):
+    """Build a self-inclusive kNN graph with deterministic tied-vector handling."""
+    nonself_neighbor_count = neighbor_count - 1
+    if nonself_neighbor_count <= 0:
+        raise ValueError("Ablation k must include self and at least one non-self neighbor.")
+    nonself_indices = (
+        NearestNeighbors(n_neighbors=nonself_neighbor_count)
+        .fit(matrix)
+        .kneighbors(return_distance=False)
+    )
+    row_indices = np.repeat(np.arange(matrix.shape[0]), nonself_neighbor_count)
+    directed = csr_matrix(
+        (
+            np.ones(row_indices.size, dtype=float),
+            (row_indices, nonself_indices.ravel()),
+        ),
+        shape=(matrix.shape[0], matrix.shape[0]),
+    )
+    directed.setdiag(1.0)
+    directed.eliminate_zeros()
+    graph = (0.5 * (directed + directed.T)).tocsr()
+    return directed, graph
+
+
+def directed_neighborhoods(directed_graph) -> np.ndarray:
+    """Return fixed-cardinality non-self neighborhoods from directed kNN rows."""
+    neighborhoods = []
+    for index in range(directed_graph.shape[0]):
+        row = directed_graph.indices[
+            directed_graph.indptr[index] : directed_graph.indptr[index + 1]
+        ]
+        neighborhoods.append(row[row != index])
+    counts = np.fromiter((len(row) for row in neighborhoods), dtype=int)
+    if not len(counts) or not np.all(counts == counts[0]):
+        raise ValueError(
+            "Directed non-self kNN neighborhood cardinality is not uniform: "
+            f"{np.unique(counts).tolist()}"
+        )
+    if counts[0] == 0:
+        raise ValueError("Directed non-self kNN neighborhoods are empty.")
+    return np.stack(neighborhoods)
+
+
+def ablation_eigensystem(graph, n_components: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return ten non-trivial eigenpairs and absolute/relative residuals."""
+    requested = n_components + ABLATION_NONTRIVIAL_EIGENPAIRS
+    if requested >= graph.shape[0]:
+        raise ValueError(
+            "Not enough samples to retain ten non-trivial eigenpairs after component "
+            f"zero modes: requested {requested}, available {graph.shape[0]}."
+        )
+    normalized_laplacian = laplacian(graph, normed=True)
+    values, vectors = eigsh(
+        normalized_laplacian,
+        k=requested,
+        which="SM",
+        v0=np.random.default_rng(SEED).standard_normal(graph.shape[0]),
+    )
+    order = np.argsort(values)
+    values = values[order]
+    vectors = vectors[:, order]
+    values = values[n_components : n_components + ABLATION_NONTRIVIAL_EIGENPAIRS]
+    vectors = vectors[:, n_components : n_components + ABLATION_NONTRIVIAL_EIGENPAIRS]
+    residual_vectors = normalized_laplacian @ vectors - vectors * values
+    absolute_residuals = np.linalg.norm(residual_vectors, axis=0)
+    laplacian_norms = np.linalg.norm(normalized_laplacian @ vectors, axis=0)
+    relative_residuals = absolute_residuals / np.maximum(laplacian_norms, 1e-15)
+    return values, vectors, absolute_residuals, relative_residuals
+
+
+def neighborhood_overlap(neighborhoods: np.ndarray, reference_neighborhoods: np.ndarray) -> np.ndarray:
+    """Compare fixed-cardinality directed neighborhoods against the full reference."""
+    if neighborhoods.shape != reference_neighborhoods.shape:
+        raise ValueError(
+            "Ablated and full reference neighborhoods must have the same shape; got "
+            f"{neighborhoods.shape} and {reference_neighborhoods.shape}."
+        )
+    denominator = neighborhoods.shape[1]
+    return np.fromiter(
+        (
+            np.intersect1d(current, reference, assume_unique=True).size / denominator
+            for current, reference in zip(neighborhoods, reference_neighborhoods)
+        ),
+        dtype=float,
+        count=len(neighborhoods),
+    )
+
+
+def neighbor_target_consistency(
+    neighborhoods: np.ndarray,
+    targets: np.ndarray,
+    normalization: float,
+) -> tuple[float, float, np.ndarray]:
+    """Predict a target using directed graph neighbors and report its agreement."""
+    predicted = targets[neighborhoods].mean(axis=1)
+    mae = float(np.mean(np.abs(targets - predicted)))
+    return float(spearmanr(targets, predicted).statistic), mae / normalization, predicted
+
+
+def rank_ablation_summary(summary: pd.DataFrame) -> pd.DataFrame:
+    """Keep physical and full-reference ranks separate for valid strict subsets."""
+    summary = summary.copy()
+    strict_valid = summary["rank_valid"] & ~summary["is_full_reference"]
+    summary["physical_rank_bonds"] = np.nan
+    summary["physical_rank_size"] = np.nan
+    summary["physical_quality_rank"] = np.nan
+    summary["full_overlap_rank"] = np.nan
+    summary.loc[strict_valid, "physical_rank_bonds"] = summary.loc[
+        strict_valid, "mean_bonds_1_8_spearman"
+    ].rank(ascending=False, method="min")
+    summary.loc[strict_valid, "physical_rank_size"] = summary.loc[
+        strict_valid, "mean_size_spearman"
+    ].rank(ascending=False, method="min")
+    summary.loc[strict_valid, "physical_quality_rank"] = summary.loc[
+        strict_valid, ["physical_rank_bonds", "physical_rank_size"]
+    ].mean(axis=1)
+    summary.loc[strict_valid, "full_overlap_rank"] = summary.loc[
+        strict_valid, "full_overlap_mean"
+    ].rank(ascending=False, method="min")
+
+    non_circular_valid = strict_valid & ~summary["includes_global"]
+    summary["non_circular_physical_quality_rank"] = np.nan
+    summary.loc[non_circular_valid, "non_circular_physical_quality_rank"] = summary.loc[
+        non_circular_valid, "physical_quality_rank"
+    ].rank(ascending=True, method="min")
+    return summary
+
+
 def state_stat_table(metadata: pd.DataFrame, values: np.ndarray) -> pd.DataFrame:
     return (
         pd.DataFrame(
@@ -595,6 +815,508 @@ def style_state_figure(fig: go.Figure, title: str) -> go.Figure:
         font=dict(size=TICK_FONT),
     )
     return fig
+
+
+def create_ablation_directories(directories: dict[str, Path]) -> dict[str, Path]:
+    root = directories["data"].parent / "ablation"
+    ablation_directories = {
+        "root": root,
+        "data": root / "data",
+        "plots": root / "plots",
+        "embeddings": root / "embeddings",
+    }
+    for directory in ablation_directories.values():
+        directory.mkdir(parents=True, exist_ok=False)
+    return ablation_directories
+
+
+def save_ablation_summary_plots(
+    summary: pd.DataFrame, plots_dir: Path
+) -> None:
+    strict_valid = summary.loc[
+        summary["rank_valid"] & ~summary["is_full_reference"]
+    ].sort_values("physical_quality_rank", ascending=False)
+    if strict_valid.empty:
+        logging.warning("No rank-valid strict ablations are available for summary plots.")
+        return
+
+    labels = strict_valid["feature_set"].to_list()
+    positions = np.arange(len(strict_valid))
+    figure, axes = plt.subplots(1, 2, figsize=(16, max(6, 0.32 * len(strict_valid))))
+    axes[0].barh(positions, strict_valid["physical_quality_rank"], color="#5c4b8a")
+    axes[0].set(
+        yticks=positions,
+        yticklabels=labels,
+        xlabel="Physical-quality rank (lower is better)",
+        title="Neighbour-prediction quality",
+    )
+    axes[1].barh(positions, strict_valid["full_overlap_rank"], color="#7c9f58")
+    axes[1].set(
+        yticks=positions,
+        yticklabels=labels,
+        xlabel="Full-reference overlap rank (lower is better)",
+        title="Similarity to full kNN graph",
+    )
+    figure.suptitle("Full feature-group ablation rankings")
+    figure.tight_layout()
+    figure.savefig(plots_dir / "ranked_summary.pdf", bbox_inches="tight")
+    plt.close(figure)
+
+    metric_columns = [
+        "mean_bonds_1_8_spearman",
+        "mean_size_spearman",
+        "mean_bonds_1_8_normalized_mae",
+        "mean_size_normalized_mae",
+        "full_overlap_mean",
+        "physical_quality_rank",
+        "full_overlap_rank",
+    ]
+    metric_labels = [
+        "bond Spearman",
+        "size Spearman",
+        "bond nMAE",
+        "size nMAE",
+        "full overlap",
+        "physical rank",
+        "overlap rank",
+    ]
+    values = strict_valid[metric_columns].to_numpy(dtype=float)
+    figure, axis = plt.subplots(figsize=(12, max(6, 0.32 * len(strict_valid))))
+    image = axis.imshow(np.ma.masked_invalid(values), aspect="auto", cmap="viridis")
+    axis.set(
+        yticks=positions,
+        yticklabels=labels,
+        xticks=np.arange(len(metric_columns)),
+        xticklabels=metric_labels,
+        title="Full feature-group ablation metrics",
+    )
+    axis.tick_params(axis="x", labelrotation=35)
+    figure.colorbar(image, ax=axis, label="Metric value")
+    figure.tight_layout()
+    figure.savefig(plots_dir / "metric_heatmap.pdf", bbox_inches="tight")
+    plt.close(figure)
+
+
+def save_ablation_disagreement_state_diagram(
+    metadata: pd.DataFrame,
+    overlap: np.ndarray,
+    state_lambdas: np.ndarray,
+    state_shifts: np.ndarray,
+    plots_dir: Path,
+) -> None:
+    disagreement = state_stat_table(metadata, 1.0 - overlap)
+    mean_grid = state_grid(disagreement, "mean", state_lambdas, state_shifts)
+    count_grid = state_grid(disagreement, "count", state_lambdas, state_shifts)
+    vmax = max(finite_max(mean_grid), 1e-12)
+    figure = go.Figure(
+        heatmap_trace(
+            mean_grid,
+            count_grid,
+            coloraxis="coloraxis",
+            quantity_label="mean neighbour disagreement",
+        )
+    )
+    apply_coloraxis(
+        figure,
+        coloraxis="coloraxis",
+        colorscale="Viridis",
+        cmin=0.0,
+        cmax=vmax,
+        title="Mean disagreement",
+    )
+    style_state_figure(
+        figure,
+        "Orientation + g(r) versus full: mean neighbour disagreement",
+    )
+    save_plotly_figure(
+        figure,
+        plots_dir / "orientation_gofr_vs_full_disagreement",
+        rows=1,
+        cols=1,
+        panel_width=650,
+        panel_height=460,
+    )
+
+
+def save_ablation_embedding_plots(
+    feature_set: str,
+    groups: list[str],
+    embedding: np.ndarray,
+    metadata: pd.DataFrame,
+    selected_k: int,
+    state_lambdas: np.ndarray,
+    state_shifts: np.ndarray,
+    output_dir: Path,
+    lilac: list[list[float | str]],
+    pride: list[list[float | str]],
+    shift_limits: tuple[float, float],
+) -> None:
+    label = " + ".join(groups)
+    plot_df = metadata.copy()
+    plot_df["spectral_coordinate_1"] = embedding[:, 0]
+    plot_df["spectral_coordinate_2"] = embedding[:, 1]
+    plot_df["lambda_color"] = nonlinear_lambda_colors(plot_df["lambda"])
+    plot_df["lambda_hover"] = plot_df["lambda"]
+    for color_key, color_label, color_column, color_range, colorbar_config in [
+        (
+            "lambda",
+            "λ",
+            "lambda_color",
+            [0.0, 1.0],
+            lambda figure: configure_lambda_colorbar(figure),
+        ),
+        (
+            "shift",
+            "shift",
+            "shift",
+            list(shift_limits),
+            lambda figure: configure_shift_colorbar(figure, *shift_limits),
+        ),
+    ]:
+        figure = px.scatter(
+            plot_df,
+            x="spectral_coordinate_1",
+            y="spectral_coordinate_2",
+            color=color_column,
+            color_continuous_scale=lilac,
+            range_color=color_range,
+            hover_data={
+                "file_id": True,
+                "lambda": False,
+                "lambda_color": False,
+                "lambda_hover": ":.5g",
+                "shift": ":.5g",
+                "spectral_coordinate_1": ":.6g",
+                "spectral_coordinate_2": ":.6g",
+            },
+            labels={
+                "spectral_coordinate_1": "Spectral coordinate 1",
+                "spectral_coordinate_2": "Spectral coordinate 2",
+                "lambda": "λ",
+                "lambda_hover": "λ",
+                "shift": "shift",
+            },
+            title=f"{label}: 2D spectral embedding, k={selected_k}, coloured by {color_label}",
+            render_mode="svg",
+            opacity=EMBEDDING_MARKER_OPACITY,
+        )
+        figure.update_traces(marker=dict(size=EMBEDDING_MARKER_SIZE))
+        figure.update_layout(template="plotly_white", font=dict(size=TICK_FONT))
+        colorbar_config(figure)
+        figure.update_xaxes(showgrid=False, zeroline=False)
+        figure.update_yaxes(showgrid=False, zeroline=False)
+        save_plotly_figure(
+            figure,
+            output_dir / f"{feature_set}_scatter_{color_key}",
+            rows=1,
+            cols=1,
+            panel_width=850,
+            panel_height=620,
+        )
+
+    state_figure = make_subplots(
+        rows=1,
+        cols=3,
+        subplot_titles=[
+            "Non-trivial spectral vector 1",
+            "Non-trivial spectral vector 2",
+            "Non-trivial spectral vector 3",
+        ],
+        horizontal_spacing=0.08,
+    )
+    for column in range(1, 4):
+        statistics = state_stat_table(metadata, embedding[:, column - 1])
+        mean_grid = state_grid(statistics, "mean", state_lambdas, state_shifts)
+        count_grid = state_grid(statistics, "count", state_lambdas, state_shifts)
+        coloraxis = coloraxis_name(column)
+        state_figure.add_trace(
+            heatmap_trace(
+                mean_grid,
+                count_grid,
+                coloraxis=coloraxis,
+                quantity_label=f"mean non-trivial spectral vector {column}",
+            ),
+            row=1,
+            col=column,
+        )
+        cmin, cmax, limit = symmetric_limits(mean_grid)
+        ticks, ticktext = symmetric_ticks(limit)
+        x_domain, y_domain = subplot_axis_domain(
+            state_figure, row=1, col=column, ncols=3
+        )
+        apply_coloraxis(
+            state_figure,
+            coloraxis=coloraxis,
+            colorscale=pride,
+            cmin=cmin,
+            cmax=cmax,
+            cmid=0.0,
+            title="Mean value",
+            colorbar_x=x_domain[1] + 0.006,
+            colorbar_y=sum(y_domain) / 2,
+            colorbar_len=y_domain[1] - y_domain[0],
+            tickvals=ticks,
+            ticktext=ticktext,
+        )
+    style_state_figure(
+        state_figure,
+        f"{label}: first three non-trivial spectral vectors, k={selected_k}",
+    )
+    save_plotly_figure(
+        state_figure,
+        output_dir / f"{feature_set}_mean_first_three_nontrivial_vectors",
+        rows=1,
+        cols=3,
+        panel_width=560,
+        panel_height=300,
+    )
+
+
+def ablation_feature_set_key(groups: list[str] | tuple[str, ...]) -> str:
+    return "__".join(group for group in ABLATION_GROUPS if group in groups)
+
+
+def run_full_group_ablation(
+    df: pd.DataFrame,
+    feature_groups: dict[str, list[str]],
+    crystallinity_mode: str,
+    selected_k: int,
+    scope: str,
+    development_rows: int,
+    directories: dict[str, Path],
+    lilac: list[list[float | str]],
+    pride: list[list[float | str]],
+) -> None:
+    """Run the opt-in five-block ablation study without changing standard analysis."""
+    if crystallinity_mode != "coarse-histograms":
+        raise ValueError(
+            "full-group-ablation requires --crystallinity-mode coarse-histograms "
+            "to define its five feature blocks."
+        )
+    missing_groups = [
+        group for group in ABLATION_GROUPS if not feature_groups.get(group)
+    ]
+    if missing_groups:
+        raise ValueError(f"Ablation feature groups are empty: {missing_groups}")
+
+    study_df = (
+        development_ablation_subset(df, development_rows)
+        if scope == "development"
+        else df.reset_index(drop=True)
+    )
+    if selected_k >= len(study_df):
+        raise ValueError(
+            f"--k must be smaller than the {scope} ablation row count "
+            f"({len(study_df)}); got {selected_k}."
+        )
+    metadata = study_df[META_COLUMNS].reset_index(drop=True).copy()
+    study_state_counts = metadata.groupby(["lambda", "shift"], sort=True).size()
+    state_lambdas = np.sort(
+        metadata.loc[
+            metadata["lambda"].between(STATE_LAMBDA_MIN, STATE_LAMBDA_MAX), "lambda"
+        ].unique()
+    )
+    state_shifts = np.sort(metadata["shift"].unique())
+    if not len(state_lambdas) or not len(state_shifts):
+        raise ValueError("No ablation state points are available within the configured λ range.")
+    shift_limits = (float(metadata["shift"].min()), float(metadata["shift"].max()))
+    normalizations = {
+        target: float(
+            np.quantile(study_df[target].to_numpy(dtype=float), 0.95)
+            - np.quantile(study_df[target].to_numpy(dtype=float), 0.05)
+        )
+        for target in ("mean_bonds_1_8", "mean_size")
+    }
+    invalid_normalizations = {
+        target: value for target, value in normalizations.items() if value <= 0.0
+    }
+    if invalid_normalizations:
+        raise ValueError(
+            "Ablation validation target has a zero 95-5 percentile range: "
+            f"{invalid_normalizations}"
+        )
+
+    ablation_directories = create_ablation_directories(directories)
+    all_feature_sets = group_ablation_feature_sets()
+    feature_sets = (
+        development_ablation_feature_sets(all_feature_sets)
+        if scope == "development"
+        else all_feature_sets
+    )
+    full_key = ablation_feature_set_key(ABLATION_GROUPS)
+    ordered_keys = [full_key, *[key for key in feature_sets if key != full_key]]
+    if len(all_feature_sets) != 31 or full_key not in feature_sets:
+        raise RuntimeError("Expected all 31 combinations and the full feature reference.")
+
+    reference_neighborhoods = None
+    overlap_by_feature_set: dict[str, np.ndarray] = {}
+    summary_rows = []
+    overlap_frames = []
+    logging.info(
+        "Running %s full feature-group ablation on %d rows and %d combinations",
+        scope,
+        len(study_df),
+        len(feature_sets),
+    )
+    for feature_set in ordered_keys:
+        groups = feature_sets[feature_set]
+        columns = feature_columns_for_groups(feature_groups, groups)
+        matrix = StandardScaler().fit_transform(study_df[columns].to_numpy(dtype=float))
+        directed_graph, graph = build_ablation_graph(matrix, selected_k)
+        neighborhoods = directed_neighborhoods(directed_graph)
+        n_components, component_labels = connected_components(graph, directed=False)
+        component_sizes = np.bincount(component_labels)
+        eigenvalues, _, absolute_residuals, relative_residuals = ablation_eigensystem(
+            graph, n_components
+        )
+        if reference_neighborhoods is None:
+            reference_neighborhoods = neighborhoods
+        overlap = neighborhood_overlap(neighborhoods, reference_neighborhoods)
+        overlap_by_feature_set[feature_set] = overlap
+        bonds_spearman, bonds_normalized_mae, _ = neighbor_target_consistency(
+            neighborhoods,
+            study_df["mean_bonds_1_8"].to_numpy(dtype=float),
+            normalizations["mean_bonds_1_8"],
+        )
+        size_spearman, size_normalized_mae, _ = neighbor_target_consistency(
+            neighborhoods,
+            study_df["mean_size"].to_numpy(dtype=float),
+            normalizations["mean_size"],
+        )
+        includes_global = "global" in groups
+        row = {
+            "feature_set": feature_set,
+            "included_groups": ";".join(groups),
+            "n_input_columns": len(columns),
+            "is_full_reference": feature_set == full_key,
+            "includes_global": includes_global,
+            "mean_bonds_1_8_in_features": includes_global,
+            "mean_size_in_features": includes_global,
+            "physical_metric_circular": includes_global,
+            "n_samples": len(study_df),
+            "directed_nonself_neighbor_count": neighborhoods.shape[1],
+            "n_components": n_components,
+            "largest_component": int(component_sizes.max()),
+            "fraction_in_largest": float(component_sizes.max() / graph.shape[0]),
+            "fully_connected": n_components == 1,
+            "fragmented": n_components > 1,
+            "rank_valid": component_sizes.max() / graph.shape[0] >= 0.99,
+            "full_overlap_mean": float(np.mean(overlap)),
+            "full_overlap_median": float(np.median(overlap)),
+            "full_overlap_p10": float(np.quantile(overlap, 0.10)),
+            "mean_bonds_1_8_spearman": bonds_spearman,
+            "mean_bonds_1_8_normalized_mae": bonds_normalized_mae,
+            "mean_size_spearman": size_spearman,
+            "mean_size_normalized_mae": size_normalized_mae,
+        }
+        for index, (eigenvalue, absolute, relative) in enumerate(
+            zip(eigenvalues, absolute_residuals, relative_residuals), start=1
+        ):
+            row[f"eigenvalue_nontrivial_{index:02d}"] = float(eigenvalue)
+            row[f"eigenpair_absolute_residual_{index:02d}"] = float(absolute)
+            row[f"eigenpair_relative_residual_{index:02d}"] = float(relative)
+        summary_rows.append(row)
+        overlap_frames.append(
+            metadata.assign(feature_set=feature_set, neighborhood_overlap=overlap)
+        )
+        logging.info("Ablation graph complete: %s", feature_set)
+
+    summary = rank_ablation_summary(pd.DataFrame(summary_rows))
+    best_candidates = summary.loc[
+        summary["rank_valid"]
+        & ~summary["is_full_reference"]
+        & ~summary["includes_global"]
+    ].sort_values(["non_circular_physical_quality_rank", "feature_set"])
+    if best_candidates.empty:
+        raise RuntimeError("No rank-valid strict subset omitting global is available.")
+    best_feature_set = str(best_candidates.iloc[0]["feature_set"])
+    summary.to_csv(
+        ablation_directories["data"] / "full_group_ablation_summary.csv", index=False
+    )
+    pd.concat(overlap_frames, ignore_index=True).to_csv(
+        ablation_directories["data"] / "full_group_ablation_neighborhood_overlap.csv",
+        index=False,
+    )
+    manifest = {
+        "scope": scope,
+        "n_source_rows": len(df),
+        "n_study_rows": len(study_df),
+        "development_row_limit": development_rows if scope == "development" else None,
+        "development_sampling": {
+            "method": "evenly spaced state points with rotating replica selection",
+            "state_count": int(len(study_state_counts)),
+            "state_sample_count_min": int(study_state_counts.min()),
+            "state_sample_count_max": int(study_state_counts.max()),
+            "target_replicas_per_state": ABLATION_DEVELOPMENT_REPLICAS_PER_STATE,
+        }
+        if scope == "development"
+        else None,
+        "selected_k": selected_k,
+        "crystallinity_mode": crystallinity_mode,
+        "ablation_groups": list(ABLATION_GROUPS),
+        "n_feature_combinations": len(feature_sets),
+        "n_full_feature_combinations": len(all_feature_sets),
+        "directed_nonself_neighbor_count": int(summary["directed_nonself_neighbor_count"].iloc[0]),
+        "reference_feature_set": full_key,
+        "best_reduced_feature_set": best_feature_set,
+        "physical_quality_rank": "Mean rank of mean_bonds_1_8 and mean_size Spearman scores; lower is better.",
+        "full_overlap_rank": "Independent rank of mean directed-neighborhood overlap with the full reference; lower is better.",
+        "rank_valid": "fraction_in_largest >= 0.99",
+        "target_normalizations": normalizations,
+    }
+    with (ablation_directories["data"] / "full_group_ablation_manifest.json").open(
+        "w", encoding="utf-8"
+    ) as handle:
+        json.dump(manifest, handle, indent=2, default=json_default)
+    save_ablation_summary_plots(summary, ablation_directories["plots"])
+
+    orientation_gofr_key = ablation_feature_set_key(("orientation", "gofr"))
+    save_ablation_disagreement_state_diagram(
+        metadata,
+        overlap_by_feature_set[orientation_gofr_key],
+        state_lambdas,
+        state_shifts,
+        ablation_directories["plots"],
+    )
+    selected_feature_sets = [
+        ablation_feature_set_key((group,)) for group in ABLATION_GROUPS
+    ] + [
+        orientation_gofr_key,
+        full_key,
+        best_feature_set,
+        *[
+            ablation_feature_set_key(("orientation", "gofr", group))
+            for group in ("global", "Rg", "crystallinity_coarse_histogram_features")
+        ],
+    ]
+    selected_feature_sets = list(dict.fromkeys(selected_feature_sets))
+    for feature_set in selected_feature_sets:
+        groups = feature_sets[feature_set]
+        columns = feature_columns_for_groups(feature_groups, groups)
+        matrix = StandardScaler().fit_transform(study_df[columns].to_numpy(dtype=float))
+        _, graph = build_ablation_graph(matrix, selected_k)
+        embedding = SpectralEmbedding(
+            n_components=3,
+            affinity="precomputed",
+            random_state=SEED,
+        ).fit_transform(graph)
+        save_ablation_embedding_plots(
+            feature_set,
+            groups,
+            embedding,
+            metadata,
+            selected_k,
+            state_lambdas,
+            state_shifts,
+            ablation_directories["embeddings"],
+            lilac,
+            pride,
+            shift_limits,
+        )
+    logging.info(
+        "Full feature-group ablation complete. Best reduced feature set: %s",
+        best_feature_set,
+    )
 
 
 def build_initial_embedding_plots(
@@ -1690,6 +2412,21 @@ def main() -> None:
 
     lilac = matplotlib_cmap_to_plotly(cmr.lilac)
     pride = matplotlib_cmap_to_plotly(cmr.pride)
+    if args.study == "full-group-ablation":
+        run_full_group_ablation(
+            df,
+            feature_groups,
+            crystallinity_mode,
+            args.k,
+            args.ablation_scope,
+            args.ablation_development_rows,
+            directories,
+            lilac,
+            pride,
+        )
+        logging.info("Results saved to: %s", results_dir.resolve())
+        return
+
     sample_metadata = df[META_COLUMNS].reset_index(drop=True).copy()
     state_lambdas = np.sort(
         sample_metadata.loc[
