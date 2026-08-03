@@ -1072,6 +1072,152 @@ def save_ablation_embedding_plots(
     )
 
 
+def save_aligned_spectral_visualization_family(
+    feature_set: str,
+    label: str,
+    coordinates: np.ndarray,
+    metadata: pd.DataFrame,
+    selected_k: int,
+    state_lambdas: np.ndarray,
+    state_shifts: np.ndarray,
+    output_dir: Path,
+    lilac: list[list[float | str]],
+    pride: list[list[float | str]],
+    shift_limits: tuple[float, float],
+) -> None:
+    """Save benchmark-styled scatter and state plots for aligned ψ1–ψ3 coordinates."""
+    if coordinates.shape != (len(metadata), 3):
+        raise ValueError("Aligned spectral coordinates must have shape (n_samples, 3).")
+    plot_df = metadata.copy()
+    for index in range(3):
+        plot_df[f"psi_{index + 1}"] = coordinates[:, index]
+    plot_df["lambda_color"] = nonlinear_lambda_colors(plot_df["lambda"])
+    plot_df["lambda_hover"] = plot_df["lambda"]
+    coordinate_pairs = ((1, 2), (1, 3), (2, 3))
+    for color_key, color_label, color_column, color_range, colorbar_config in [
+        (
+            "lambda",
+            "λ",
+            "lambda_color",
+            [0.0, 1.0],
+            lambda figure: configure_lambda_colorbar(figure),
+        ),
+        (
+            "shift",
+            "shift",
+            "shift",
+            list(shift_limits),
+            lambda figure: configure_shift_colorbar(figure, *shift_limits),
+        ),
+    ]:
+        figure = make_subplots(
+            rows=1,
+            cols=3,
+            subplot_titles=[f"ψ{first} versus ψ{second}" for first, second in coordinate_pairs],
+            horizontal_spacing=0.08,
+        )
+        customdata = np.column_stack(
+            (
+                plot_df["file_id"].to_numpy(),
+                plot_df["lambda_hover"].to_numpy(dtype=float),
+                plot_df["shift"].to_numpy(dtype=float),
+            )
+        )
+        for column, (first, second) in enumerate(coordinate_pairs, start=1):
+            figure.add_trace(
+                go.Scatter(
+                    x=plot_df[f"psi_{first}"],
+                    y=plot_df[f"psi_{second}"],
+                    mode="markers",
+                    marker=dict(
+                        size=EMBEDDING_MARKER_SIZE,
+                        opacity=EMBEDDING_MARKER_OPACITY,
+                        color=plot_df[color_column],
+                        coloraxis="coloraxis",
+                    ),
+                    customdata=customdata,
+                    hovertemplate=(
+                        f"ψ{first}=%{{x:.6g}}<br>ψ{second}=%{{y:.6g}}<br>"
+                        "file_id=%{customdata[0]}<br>λ=%{customdata[1]:.5g}<br>"
+                        "shift=%{customdata[2]:.5g}<extra></extra>"
+                    ),
+                    showlegend=False,
+                ),
+                row=1,
+                col=column,
+            )
+            figure.update_xaxes(title_text=f"ψ{first}", showgrid=False, zeroline=False, row=1, col=column)
+            figure.update_yaxes(title_text=f"ψ{second}", showgrid=False, zeroline=False, row=1, col=column)
+        figure.update_layout(
+            title=f"{label}: spectral coordinates, k={selected_k}, coloured by {color_label}",
+            template="plotly_white",
+            font=dict(size=TICK_FONT),
+            coloraxis=dict(colorscale=lilac, cmin=color_range[0], cmax=color_range[1]),
+        )
+        colorbar_config(figure)
+        save_plotly_figure(
+            figure,
+            output_dir / f"{feature_set}_spectral_pairs_{color_key}",
+            rows=1,
+            cols=3,
+            panel_width=420,
+            panel_height=460,
+        )
+
+    state_figure = make_subplots(
+        rows=1,
+        cols=3,
+        subplot_titles=["⟨ψ1⟩", "⟨ψ2⟩", "⟨ψ3⟩"],
+        horizontal_spacing=0.08,
+    )
+    for column in range(1, 4):
+        statistics = state_stat_table(metadata, coordinates[:, column - 1])
+        mean_grid = state_grid(statistics, "mean", state_lambdas, state_shifts)
+        count_grid = state_grid(statistics, "count", state_lambdas, state_shifts)
+        coloraxis = coloraxis_name(column)
+        state_figure.add_trace(
+            heatmap_trace(
+                mean_grid,
+                count_grid,
+                coloraxis=coloraxis,
+                quantity_label=f"mean ψ{column}",
+            ),
+            row=1,
+            col=column,
+        )
+        cmin, cmax, limit = symmetric_limits(mean_grid)
+        ticks, ticktext = symmetric_ticks(limit)
+        x_domain, y_domain = subplot_axis_domain(
+            state_figure, row=1, col=column, ncols=3
+        )
+        apply_coloraxis(
+            state_figure,
+            coloraxis=coloraxis,
+            colorscale=pride,
+            cmin=cmin,
+            cmax=cmax,
+            cmid=0.0,
+            title="Mean value",
+            colorbar_x=x_domain[1] + 0.006,
+            colorbar_y=sum(y_domain) / 2,
+            colorbar_len=y_domain[1] - y_domain[0],
+            tickvals=ticks,
+            ticktext=ticktext,
+        )
+    style_state_figure(
+        state_figure,
+        f"{label}: aligned spectral-coordinate state means, k={selected_k}",
+    )
+    save_plotly_figure(
+        state_figure,
+        output_dir / f"{feature_set}_aligned_coordinate_state_means",
+        rows=1,
+        cols=3,
+        panel_width=560,
+        panel_height=300,
+    )
+
+
 def ablation_feature_set_key(groups: list[str] | tuple[str, ...]) -> str:
     return "__".join(group for group in ABLATION_GROUPS if group in groups)
 
