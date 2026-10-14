@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Create the seven-panel spectral-embedding figure with three coordinates."""
+"""Create the nine-panel spectral-embedding figure with three coordinates."""
 
 from __future__ import annotations
 
 import argparse
+import copy
 import tempfile
 import xml.etree.ElementTree as element_tree
 from pathlib import Path
@@ -14,27 +15,28 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import cmasher as cmr
 import numpy as np
 import pandas as pd
-from matplotlib import font_manager
 from matplotlib.colors import Normalize, PowerNorm, TwoSlopeNorm
-from matplotlib.textpath import TextPath
+from matplotlib.patches import Patch
 from matplotlib.ticker import ScalarFormatter
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import ML_diffusion_map_testing as analysis
 import make_main_figure as reference
 
 
-FIGURE_SIZE = (19.5, 7.7)
+FIGURE_SIZE = (16.5, 10.0)
 OUTPUT_BASE = Path("figures/spectral_embedding_3components")
-SCATTER_TICK_FONT_SIZE = 11
-INSET_TICK_FONT_SIZE = 8
-INSET_COLORBAR_TICK_FONT_SIZE = 7
-INSET_COLORBAR_LABEL_FONT_SIZE = 9
+PANEL_LABEL_FONT_SIZE = 16
+TITLE_FONT_SIZE = 14
+AXIS_LABEL_FONT_SIZE = 14
+SCATTER_TICK_FONT_SIZE = 12
 MAP_TICK_FONT_SIZE = 12
-COLORBAR_TICK_FONT_SIZE = 10
-COLORBAR_LABEL_FONT_SIZE = 14
+COLORBAR_TICK_FONT_SIZE = 11
+COLORBAR_LABEL_FONT_SIZE = 13
+LEGEND_FONT_SIZE = 11
+PANEL_LABEL_OFFSET = 0.004
 
 
 def scientific_formatter(exponent: int = -3) -> ScalarFormatter:
@@ -70,132 +72,72 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def add_panel_labels(figure: plt.Figure, boxes: dict[str, Any]) -> dict[str, dict[str, float]]:
-    labels = {key: f"({key})" for key in "abcdefg"}
-    positions = {}
-    top_y = boxes["a"].y1 + reference.PANEL_LABEL_OFFSET
-    bottom_y = boxes["d"].y1 + reference.PANEL_LABEL_OFFSET
-    for key, label in labels.items():
-        y = top_y if key in {"a", "b", "c"} else bottom_y
+def add_panel_headings(figure: plt.Figure, boxes: dict[str, Any]) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    headings = {
+        "a": "Spectral embedding method",
+        "b": r"$\psi_1$–$\psi_2$ colored by shift",
+        "c": r"$\psi_1$–$\psi_2$ colored by $\lambda$",
+        "d": r"$\psi_1$–$\psi_3$ colored by shift",
+        "e": r"$\psi_1$–$\psi_3$ colored by $\lambda$",
+        "f": r"$\psi_1$ state diagram",
+        "g": r"$\psi_2$ state diagram",
+        "h": r"$\psi_3$ state diagram",
+        "i": "Connectivity state diagram",
+    }
+    label_positions, heading_positions = {}, {}
+    for key, heading in headings.items():
+        box = boxes[key]
+        heading_y = box.y1 + PANEL_LABEL_OFFSET
+        label_y = box.y1 + 0.025
         figure.text(
-            boxes[key].x0,
-            y,
-            label,
-            fontsize=reference.PANEL_LABEL_FONT_SIZE,
+            box.x0,
+            label_y,
+            f"({key})",
+            fontsize=PANEL_LABEL_FONT_SIZE,
             fontweight="bold",
             ha="left",
             va="bottom",
         )
-        positions[key] = {"x": float(boxes[key].x0), "y": float(y)}
-    return positions
-
-
-def add_top_headings(figure: plt.Figure, boxes: dict[str, Any]) -> dict[str, dict[str, float]]:
-    headings = {
-        "a": "Spectral embedding method",
-        "b": r"$\psi_1$–$\psi_2$ coloured by shift",
-        "c": r"$\psi_1$–$\psi_3$ coloured by shift",
-    }
-    positions = {}
-    for key, heading in headings.items():
-        box = boxes[key]
-        x, y = (box.x0 + box.x1) / 2.0, box.y1 + reference.PANEL_LABEL_OFFSET
+        x = (box.x0 + box.x1) / 2.0
         figure.text(
             x,
-            y,
+            heading_y,
             heading,
-            fontsize=reference.TOP_HEADING_FONT_SIZE,
+            fontsize=TITLE_FONT_SIZE,
             fontweight="normal",
             ha="center",
             va="bottom",
         )
-        positions[key] = {"x": float(x), "y": float(y), "text": heading}
-    return positions
+        label_positions[key] = {"x": float(box.x0), "y": float(label_y)}
+        heading_positions[key] = {"x": float(x), "y": float(heading_y), "text": heading}
+    return label_positions, heading_positions
 
 
-def scatter_with_inset(
-    figure: plt.Figure,
+def draw_scatter(
     axis: plt.Axes,
     x: np.ndarray,
     y: np.ndarray,
-    lambdas: np.ndarray,
-    shifts: np.ndarray,
+    colors: np.ndarray,
+    cmap: Any,
+    norm: Normalize,
     xlabel: str,
     ylabel: str,
-    inset_bounds: tuple[float, float, float, float],
-) -> tuple[Any, Any]:
-    shift_scatter = axis.scatter(
+) -> Any:
+    scatter = axis.scatter(
         x,
         y,
-        c=shifts,
-        cmap=analysis.cmr.lilac,
-        norm=Normalize(vmin=float(shifts.min()), vmax=float(shifts.max())),
+        c=colors,
+        cmap=cmap,
+        norm=norm,
         s=analysis.EMBEDDING_MARKER_SIZE,
         alpha=analysis.EMBEDDING_MARKER_OPACITY,
         linewidths=0,
         rasterized=True,
     )
-    x_limits = (
-        float(x.min() - max(np.ptp(x) * 0.04, 1e-12)),
-        float(x.max() + max(np.ptp(x) * 0.04, 1e-12)),
-    )
-    y_limits = (
-        float(y.min() - max(np.ptp(y) * 0.04, 1e-12)),
-        float(y.max() + max(np.ptp(y) * 0.04, 1e-12)),
-    )
-    axis.set(xlim=x_limits, ylim=y_limits, xlabel=xlabel, ylabel=ylabel)
-    axis.set_box_aspect(0.78)
+    axis.set(xlabel=xlabel, ylabel=ylabel)
     reference.style_axis(axis, SCATTER_TICK_FONT_SIZE, 2)
     format_spectral_axis(axis, SCATTER_TICK_FONT_SIZE)
-
-    inset = axis.inset_axes(inset_bounds)
-    lambda_scatter = inset.scatter(
-        x,
-        y,
-        c=np.clip(lambdas, analysis.LAMBDA_COLOR_VMIN, analysis.LAMBDA_COLOR_VMAX),
-        cmap=analysis.cmr.lilac,
-        norm=PowerNorm(
-            gamma=analysis.LAMBDA_COLOR_GAMMA,
-            vmin=analysis.LAMBDA_COLOR_VMIN,
-            vmax=analysis.LAMBDA_COLOR_VMAX,
-        ),
-        s=analysis.EMBEDDING_MARKER_SIZE,
-        alpha=analysis.EMBEDDING_MARKER_OPACITY,
-        linewidths=0,
-        rasterized=True,
-    )
-    inset.set(xlim=x_limits, ylim=y_limits)
-    inset.tick_params(
-        labelsize=INSET_TICK_FONT_SIZE,
-        length=2,
-        width=reference.MATPLOTLIB_AXIS_LINEWIDTH,
-        pad=1,
-    )
-    for spine in inset.spines.values():
-        spine.set_linewidth(reference.MATPLOTLIB_AXIS_LINEWIDTH)
-    format_spectral_axis(inset, INSET_TICK_FONT_SIZE)
-    inset.set_facecolor("white")
-    inset.set_zorder(5)
-    # Keep the lambda scale outside the inset's plotting area so it cannot
-    # cover the projected points.
-    lambda_cax = axis.inset_axes(
-        [
-            inset_bounds[0] + inset_bounds[2] + 0.012,
-            inset_bounds[1] + 0.05 * inset_bounds[3],
-            0.018,
-            0.90 * inset_bounds[3],
-        ]
-    )
-    lambda_bar = figure.colorbar(lambda_scatter, cax=lambda_cax)
-    lambda_bar.set_label(r"$\lambda$", fontsize=INSET_COLORBAR_LABEL_FONT_SIZE, labelpad=1)
-    lambda_bar.set_ticks(np.arange(0, 31, 10))
-    lambda_bar.ax.tick_params(
-        labelsize=INSET_COLORBAR_TICK_FONT_SIZE,
-        pad=1,
-        width=reference.MATPLOTLIB_AXIS_LINEWIDTH,
-        length=2,
-    )
-    return shift_scatter, lambda_bar
+    return scatter
 
 
 def build_figure(
@@ -208,9 +150,9 @@ def build_figure(
     plt.rcParams.update(
         {
             "font.family": font_name,
-            "font.size": reference.AXIS_LABEL_FONT_SIZE,
-            "axes.labelsize": reference.AXIS_LABEL_FONT_SIZE,
-            "axes.titlesize": reference.TITLE_FONT_SIZE,
+            "font.size": AXIS_LABEL_FONT_SIZE,
+            "axes.labelsize": AXIS_LABEL_FONT_SIZE,
+            "axes.titlesize": TITLE_FONT_SIZE,
             "axes.linewidth": reference.MATPLOTLIB_AXIS_LINEWIDTH,
             "svg.fonttype": "none",
             "pdf.fonttype": 42,
@@ -218,37 +160,38 @@ def build_figure(
         }
     )
     figure = plt.figure(figsize=FIGURE_SIZE, facecolor="white")
-    outer = figure.add_gridspec(2, 1, height_ratios=(1.16, 0.84), hspace=0.30)
-    top = outer[0].subgridspec(1, 3, width_ratios=(1.25, 1.0, 1.0), wspace=0.19)
-    bottom = outer[1].subgridspec(1, 4, width_ratios=(1, 1, 1, 1), wspace=0.16)
-    top_panels = [top[index].subgridspec(2, 1, height_ratios=(0.11, 0.89), hspace=0.0) for index in range(3)]
-    axis_a = figure.add_subplot(top_panels[0][1])
-    axis_b = figure.add_subplot(top_panels[1][1])
-    axis_c = figure.add_subplot(top_panels[2][1])
+    outer = figure.add_gridspec(2, 1, height_ratios=(2.15, 1.0), hspace=0.30)
+    top = outer[0].subgridspec(2, 3, width_ratios=(0.90, 1.12, 1.12), wspace=0.31, hspace=0.34)
+    bottom = outer[1].subgridspec(1, 4, wspace=0.30)
+    axis_a = figure.add_subplot(top[:, 0])
+
+    scatter_axes, scatter_caxes = [], []
+    for panel in (top[0, 1], top[0, 2], top[1, 1], top[1, 2]):
+        subgrid = panel.subgridspec(1, 2, width_ratios=(1, 0.045), wspace=0.13)
+        scatter_axes.append(figure.add_subplot(subgrid[0]))
+        scatter_caxes.append(figure.add_subplot(subgrid[1]))
+    axis_b, axis_c, axis_d, axis_e = scatter_axes
+
     map_axes = []
     map_caxes = []
     for panel in bottom:
-        subgrid = panel.subgridspec(1, 2, width_ratios=(1, 0.048), wspace=0.18)
+        subgrid = panel.subgridspec(1, 2, width_ratios=(1, 0.055), wspace=0.24)
         map_axes.append(figure.add_subplot(subgrid[0]))
         map_caxes.append(figure.add_subplot(subgrid[1]))
-    axis_d, axis_e, axis_f, axis_g = map_axes
-    for cax in map_caxes:
-        cax.set_axis_off()
-    figure.subplots_adjust(left=0.045, right=0.965, top=0.94, bottom=0.105)
+    axis_f, axis_g, axis_h, axis_i = map_axes
+    map_caxes[-1].set_axis_off()
+    figure.subplots_adjust(left=0.050, right=0.955, top=0.940, bottom=0.080)
 
     containers = {
-        "a": top[0].get_position(figure),
-        "b": top[1].get_position(figure),
-        "c": top[2].get_position(figure),
-        "d": bottom[0].get_position(figure),
-        "e": bottom[1].get_position(figure),
-        "f": bottom[2].get_position(figure),
-        "g": bottom[3].get_position(figure),
-    }
-    heading_boxes = {
-        "a": top_panels[0][0].get_position(figure),
-        "b": top_panels[1][0].get_position(figure),
-        "c": top_panels[2][0].get_position(figure),
+        "a": top[:, 0].get_position(figure),
+        "b": top[0, 1].get_position(figure),
+        "c": top[0, 2].get_position(figure),
+        "d": top[1, 1].get_position(figure),
+        "e": top[1, 2].get_position(figure),
+        "f": bottom[0].get_position(figure),
+        "g": bottom[1].get_position(figure),
+        "h": bottom[2].get_position(figure),
+        "i": bottom[3].get_position(figure),
     }
     if external_panel_a:
         axis_a.set_axis_off()
@@ -260,37 +203,39 @@ def build_figure(
     psi1 = coordinates["spectral_coordinate_1"].to_numpy(float)
     psi2 = coordinates["spectral_coordinate_2"].to_numpy(float)
     psi3 = coordinates["spectral_coordinate_3"].to_numpy(float)
-    shift_scatter_b, _ = scatter_with_inset(
-        figure,
-        axis_b,
-        psi1,
-        psi2,
-        lambdas,
-        shifts,
-        r"$\psi_1$",
-        r"$\psi_2$",
-        (0.32, 0.58, 0.35, 0.35),
+    shift_norm = Normalize(vmin=float(shifts.min()), vmax=float(shifts.max()))
+    lambda_norm = PowerNorm(
+        gamma=analysis.LAMBDA_COLOR_GAMMA,
+        vmin=analysis.LAMBDA_COLOR_VMIN,
+        vmax=analysis.LAMBDA_COLOR_VMAX,
     )
-    shift_scatter_c, _ = scatter_with_inset(
-        figure,
-        axis_c,
-        psi1,
-        psi3,
-        lambdas,
-        shifts,
-        r"$\psi_1$",
-        r"$\psi_3$",
-        (0.56, 0.58, 0.34, 0.34),
+    clipped_lambdas = np.clip(lambdas, analysis.LAMBDA_COLOR_VMIN, analysis.LAMBDA_COLOR_VMAX)
+    scatter_specs = (
+        (axis_b, psi2, shifts, analysis.cmr.lilac, shift_norm, r"$\psi_2$", "shift"),
+        (axis_c, psi2, clipped_lambdas, cmr.lavender, lambda_norm, r"$\psi_2$", r"$\lambda$"),
+        (axis_d, psi3, shifts, analysis.cmr.lilac, shift_norm, r"$\psi_3$", "shift"),
+        (axis_e, psi3, clipped_lambdas, cmr.lavender, lambda_norm, r"$\psi_3$", r"$\lambda$"),
     )
-
-    shift_cax_b = inset_axes(axis_b, width="3.5%", height="100%", loc="lower left", bbox_to_anchor=(1.085, 0.0, 1.0, 1.0), bbox_transform=axis_b.transAxes, borderpad=0)
-    shift_cax_c = inset_axes(axis_c, width="3.5%", height="100%", loc="lower left", bbox_to_anchor=(1.085, 0.0, 1.0, 1.0), bbox_transform=axis_c.transAxes, borderpad=0)
-    for scatter, cax in ((shift_scatter_b, shift_cax_b), (shift_scatter_c, shift_cax_c)):
+    for (axis, y, colors, cmap, norm, ylabel, colorbar_label), cax in zip(scatter_specs, scatter_caxes):
+        scatter = draw_scatter(axis, psi1, y, colors, cmap, norm, r"$\psi_1$", ylabel)
         bar = figure.colorbar(scatter, cax=cax)
-        bar.set_label("shift", fontsize=reference.AXIS_LABEL_FONT_SIZE, labelpad=3)
-        bar.ax.yaxis.set_ticks_position("left")
-        bar.ax.yaxis.set_label_position("right")
-        bar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=reference.MATPLOTLIB_AXIS_LINEWIDTH)
+        bar.set_label(colorbar_label, fontsize=COLORBAR_LABEL_FONT_SIZE, labelpad=3)
+        if colorbar_label == r"$\lambda$":
+            bar.set_ticks(np.arange(0, 31, 10))
+        bar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=2, width=reference.MATPLOTLIB_AXIS_LINEWIDTH)
+
+    psi12_limits = (
+        (float(psi1.min() - max(np.ptp(psi1) * 0.04, 1e-12)), float(psi1.max() + max(np.ptp(psi1) * 0.04, 1e-12))),
+        (float(psi2.min() - max(np.ptp(psi2) * 0.04, 1e-12)), float(psi2.max() + max(np.ptp(psi2) * 0.04, 1e-12))),
+    )
+    psi13_limits = (
+        psi12_limits[0],
+        (float(psi3.min() - max(np.ptp(psi3) * 0.04, 1e-12)), float(psi3.max() + max(np.ptp(psi3) * 0.04, 1e-12))),
+    )
+    for axis in (axis_b, axis_c):
+        axis.set(xlim=psi12_limits[0], ylim=psi12_limits[1])
+    for axis in (axis_d, axis_e):
+        axis.set(xlim=psi13_limits[0], ylim=psi13_limits[1])
 
     grids, state_lambdas, state_shifts = reference.spectral_state_grids(coordinates, lambda_limits, (1, 2, 3))
     # Keep the existing psi1/psi2 scale unchanged and apply it to psi3.
@@ -299,7 +244,7 @@ def build_figure(
     spectral_cmap.set_bad(analysis.MISSING_CELL_COLOR)
     x_edges, y_edges = reference.cell_edges(state_shifts), reference.cell_edges(state_lambdas)
     map_images = {}
-    for axis, index in zip((axis_d, axis_e, axis_f), (1, 2, 3)):
+    for axis, index in zip((axis_f, axis_g, axis_h), (1, 2, 3)):
         map_images[index] = axis.pcolormesh(
             x_edges,
             y_edges,
@@ -309,30 +254,59 @@ def build_figure(
             shading="flat",
             rasterized=True,
         )
-        axis.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title=rf"$\langle\psi_{index}\rangle$ state diagram")
-        axis.set_title(axis.get_title(), fontsize=reference.TITLE_FONT_SIZE, fontweight="normal", pad=reference.TITLE_PAD)
+        axis.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift")
         reference.style_axis(axis, MAP_TICK_FONT_SIZE)
-    axis_d.set_ylabel(r"$\lambda$")
-    axis_e.tick_params(labelleft=False)
-    axis_f.tick_params(labelleft=False)
+    axis_f.set_ylabel(r"$\lambda$")
+    axis_g.tick_params(labelleft=False)
+    axis_h.tick_params(labelleft=False)
 
     topology = reference.build_topology_state_map(topology_path, state_lambdas, state_shifts)
-    reference.draw_topology_map(axis_g, topology, x_edges, y_edges)
-    axis_g.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift", title="Connectivity state diagram")
-    axis_g.set_title(axis_g.get_title(), fontsize=reference.TITLE_FONT_SIZE, fontweight="normal", pad=reference.TITLE_PAD)
-    axis_g.tick_params(labelleft=False)
-    reference.style_axis(axis_g, MAP_TICK_FONT_SIZE)
-    legend_position = reference.topology_legend(axis_g)
+    reference.draw_topology_map(axis_i, topology, x_edges, y_edges)
+    axis_i.set(xlim=(x_edges[0], x_edges[-1]), ylim=(y_edges[0], y_edges[-1]), xlabel="shift")
+    axis_i.tick_params(labelleft=False)
+    reference.style_axis(axis_i, MAP_TICK_FONT_SIZE)
+    legend_position = {"x": 0.025, "y": 0.57, "width": 0.68, "height": 0.40}
+    legend_axis = axis_i.inset_axes(list(legend_position.values()))
+    legend_axis.set_axis_off()
+    handles = [
+        Patch(
+            facecolor=reference.TOPOLOGY_COLORS[item],
+            edgecolor="white" if item == "chain" else "none",
+            linewidth=0.5,
+            label=reference.TOPOLOGY_LABELS[item],
+        )
+        for item in reference.TOPOLOGY_CATEGORIES
+    ]
+    legend = legend_axis.legend(
+        handles=handles,
+        title="Connectivity",
+        loc="upper left",
+        frameon=True,
+        facecolor="#101820",
+        edgecolor="none",
+        framealpha=0.72,
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_FONT_SIZE + 0.5,
+        handlelength=0.9,
+        handletextpad=0.4,
+        labelspacing=0.30,
+        borderpad=0.42,
+        borderaxespad=0.0,
+    )
+    legend.get_title().set_color("white")
+    for text in legend.get_texts():
+        text.set_color("white")
 
     figure.canvas.draw()
+    for axis, cax in zip(scatter_axes, scatter_caxes):
+        axis_box, color_box = axis.get_position(), cax.get_position()
+        cax.set_position([color_box.x0, axis_box.y0, color_box.width, axis_box.height])
     state_colorbars = []
     displayed_limit = round(color_limit, 3)
     ticks = [-displayed_limit, 0.0, displayed_limit]
-    displayed_ticks = [f"{tick / 1e-3:.3g}" for tick in ticks]
-    for coordinate, cax, axis in zip((1, 2, 3), map_caxes[:3], (axis_d, axis_e, axis_f)):
+    for coordinate, cax, axis in zip((1, 2, 3), map_caxes[:3], (axis_f, axis_g, axis_h)):
         map_box, color_box = axis.get_position(), cax.get_position()
-        cax.set_position([color_box.x0 + reference.STATE_COLORBAR_RIGHT_SHIFT, map_box.y0, color_box.width, map_box.height])
-        cax.set_axis_on()
+        cax.set_position([color_box.x0, map_box.y0, color_box.width, map_box.height])
         colorbar = figure.colorbar(map_images[coordinate], cax=cax)
         colorbar.set_label(rf"$\langle\psi_{coordinate}\rangle$", fontsize=COLORBAR_LABEL_FONT_SIZE, labelpad=3)
         colorbar.set_ticks(ticks)
@@ -347,8 +321,8 @@ def build_figure(
         offset_text.set_horizontalalignment("center")
         state_colorbars.append(colorbar)
 
-    labels = add_panel_labels(figure, containers)
-    headings = add_top_headings(figure, heading_boxes)
+    labels, headings = add_panel_headings(figure, containers)
+    axes = dict(zip("abcdefghi", (axis_a, axis_b, axis_c, axis_d, axis_e, axis_f, axis_g, axis_h, axis_i)))
     details = {
         "font_family": font_name,
         "lato_available": lato_available,
@@ -356,64 +330,104 @@ def build_figure(
         "state_shifts": state_shifts.tolist(),
         "spectral_color_limit": color_limit,
         "spectral_color_limit_source": "psi1_and_psi2_reference_scale",
-        "panels": "three_component_embedding_and_three_spectral_state_diagrams",
+        "panels": "nine_panel_three_component_embedding_and_state_diagrams",
         "panel_containers": {name: reference.bbox_record(box) for name, box in containers.items()},
-        "principal_axes": {name: reference.bbox_record(axis.get_position()) for name, axis in zip("abcdefg", (axis_a, axis_b, axis_c, axis_d, axis_e, axis_f, axis_g))},
+        "principal_axes": {name: reference.bbox_record(axis.get_position()) for name, axis in axes.items()},
         "panel_label_positions": labels,
-        "top_heading_positions": headings,
+        "panel_heading_positions": headings,
+        "scatter_colormaps": {"shift": "cmr.lilac", "lambda": "cmr.lavender"},
+        "scatter_normalization": {
+            "shift": [float(shifts.min()), float(shifts.max())],
+            "lambda": [analysis.LAMBDA_COLOR_VMIN, analysis.LAMBDA_COLOR_VMAX, analysis.LAMBDA_COLOR_GAMMA],
+        },
+        "font_sizes": {
+            "panel_labels": PANEL_LABEL_FONT_SIZE,
+            "titles": TITLE_FONT_SIZE,
+            "axis_labels": AXIS_LABEL_FONT_SIZE,
+            "scatter_ticks": SCATTER_TICK_FONT_SIZE,
+            "map_ticks": MAP_TICK_FONT_SIZE,
+            "colorbar_labels": COLORBAR_LABEL_FONT_SIZE,
+            "colorbar_ticks": COLORBAR_TICK_FONT_SIZE,
+            "legend": LEGEND_FONT_SIZE,
+        },
         "topology": {"source": str(topology_path.resolve()), "legend_inset_axes": legend_position},
     }
     return figure, axis_a, details
 
 
 def enlarged_panel_a_source(panel_svg: Path, output_svg: Path) -> None:
-    """Prepare a larger-text copy for composition without changing the source SVG."""
-    tree = element_tree.parse(panel_svg)
-    root = tree.getroot()
-    panel_font, _ = reference.choose_font()
-    label_size, small_size, psi_size = 58, 44, 82
-    font = font_manager.FontProperties(family=panel_font)
-    standardize_width = TextPath((0, 0), "standardize", size=label_size, prop=font).get_extents().width
-    standardize_detail_width = TextPath((0, 0), "zero mean, unit variance", size=small_size, prop=font).get_extents().width
-    standardize_box_width = max(420.0, standardize_width, standardize_detail_width) + 84.0
-    embedding_width = TextPath((0, 0), "spectral embedding", size=label_size, prop=font).get_extents().width
-    embedding_box_width = max(450.0, embedding_width + 84.0)
+    """Reflow the landscape workflow into a tall composition for Panel (a)."""
+    source_root = element_tree.parse(panel_svg).getroot()
+    children = list(source_root)
+    if len(children) < 21:
+        raise ValueError("Panel-a SVG does not have the expected workflow structure.")
+
+    root = element_tree.Element(
+        source_root.tag,
+        {"width": "900", "height": "1650", "viewBox": "0 0 900 1650"},
+    )
+    root.append(copy.deepcopy(children[0]))
     for element in root.iter():
         if element.tag.endswith("style") and element.text:
             element.text = (
-                element.text.replace("font-size:30px", f"font-size:{label_size}px")
-                .replace("font-size:22px", f"font-size:{small_size}px")
-                .replace("font-size:46px", f"font-size:{psi_size}px")
+                element.text.replace("font-size:46px", "font-size:66px")
+                .replace("font-size:30px", "font-size:46px")
+                .replace("font-size:22px", "font-size:34px")
             )
-        if element.tag.endswith("rect") and element.get("class") == "box":
-            if element.get("x") == "560" and element.get("y") == "360":
-                element.attrib.update({"x": f"{770.0 - standardize_box_width / 2.0:g}", "y": "350", "width": f"{standardize_box_width:g}", "height": "130"})
-            elif element.get("x") == "565" and element.get("y") == "750":
-                element.attrib.update({"x": f"{790.0 - embedding_box_width / 2.0:g}", "y": "740", "width": f"{embedding_box_width:g}", "height": "110"})
-        if element.tag.endswith("text") and element.text:
-            if element.text == "standardize":
-                element.set("y", "407")
-            if element.text == "zero mean, unit variance":
-                element.set("y", "459")
-            elif element.text == "kNN graph":
-                element.set("y", "580")
-            elif element.text == "(k = 32)":
-                element.set("y", "650")
-            elif element.text == "spectral embedding":
-                element.set("y", "811")
-            elif element.text == "non-trivial":
-                element.set("y", "902")
-            elif element.text == "spectral coordinates":
-                element.set("y", "972")
-        if element.tag.endswith("path"):
-            path = element.get("d")
-            if path == "M 790 470 L 790 500":
-                element.set("d", "M 790 495 L 790 515")
-            elif path == "M 790 705 L 790 740":
-                element.set("d", "M 790 705 L 790 730")
-            elif path == "M 790 835 L 790 865":
-                element.set("d", "M 790 855 L 790 875")
-    tree.write(output_svg, encoding="utf-8", xml_declaration=True)
+
+    namespace = source_root.tag.split("}")[0].lstrip("{")
+    qualified = lambda name: f"{{{namespace}}}{name}"
+    element_tree.SubElement(root, qualified("rect"), {"width": "100%", "height": "100%", "fill": "white"})
+
+    orientation = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.3 0 0 1.3 -70 55)"})
+    for element in children[2:14]:
+        orientation.append(copy.deepcopy(element))
+
+    radial = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.15 0 0 1.15 -735 430)"})
+    for element in children[14:18]:
+        radial.append(copy.deepcopy(element))
+
+    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 330 735 L 405 785"})
+    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 570 735 L 495 785"})
+
+    workflow = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.2 0 0 1.2 -498 360)"})
+    for element in children[20:]:
+        copied = copy.deepcopy(element)
+        if copied.tag.endswith("text") and copied.text in {"non-trivial", "spectral coordinates"}:
+            copied.set("x", "500")
+        workflow.append(copied)
+    element_tree.ElementTree(root).write(output_svg, encoding="utf-8", xml_declaration=True)
+
+
+def compose_panel_a_svg(base_svg: Path, panel_svg: Path, panel_box: Any, output_svg: Path) -> dict[str, Any]:
+    """Place the tall workflow SVG into the Matplotlib-generated SVG."""
+    base_tree = element_tree.parse(base_svg)
+    base_root = base_tree.getroot()
+    panel_root = copy.deepcopy(element_tree.parse(panel_svg).getroot())
+    source_viewbox = [float(value) for value in panel_root.attrib["viewBox"].split()]
+    width, height = reference.svg_canvas_size(base_root)
+    inset_x = panel_box.x0 + 0.005 * panel_box.width
+    inset_y = panel_box.y0 + 0.005 * panel_box.height
+    inset_width = 0.99 * panel_box.width
+    inset_height = 0.99 * panel_box.height
+    panel_root.attrib.update(
+        {
+            "x": f"{inset_x * width:.6f}",
+            "y": f"{(1 - inset_y - inset_height) * height:.6f}",
+            "width": f"{inset_width * width:.6f}",
+            "height": f"{inset_height * height:.6f}",
+            "overflow": "hidden",
+            "preserveAspectRatio": "xMidYMid meet",
+        }
+    )
+    base_root.append(panel_root)
+    base_tree.write(output_svg, encoding="utf-8", xml_declaration=True)
+    return {
+        "source_viewbox": source_viewbox,
+        "visible_viewbox": source_viewbox,
+        "placement_fraction": {"x": inset_x, "y": inset_y, "width": inset_width, "height": inset_height},
+        "live_text_in_composed_svg": True,
+    }
 
 
 def main() -> None:
@@ -450,7 +464,7 @@ def main() -> None:
                 enlarged_panel_a = Path(temporary) / "panel_a_enlarged_text.svg"
                 enlarged_panel_a_source(panel_svg, enlarged_panel_a)
                 figure.savefig(base_svg, format="svg")
-                panel_a_details.update(reference.compose_panel_a_svg(base_svg, enlarged_panel_a, axis_a.get_position(), paths["svg"]))
+                panel_a_details.update(compose_panel_a_svg(base_svg, enlarged_panel_a, axis_a.get_position(), paths["svg"]))
             reference.export_with_inkscape(paths["svg"], paths)
     finally:
         plt.close(figure)
