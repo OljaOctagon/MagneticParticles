@@ -99,6 +99,8 @@ def add_panel_headings(figure: plt.Figure, boxes: dict[str, Any]) -> tuple[dict[
             va="bottom",
         )
         x = (box.x0 + box.x1) / 2.0
+        if key == "i":
+            x -= 0.015
         figure.text(
             x,
             heading_y,
@@ -379,22 +381,36 @@ def enlarged_panel_a_source(panel_svg: Path, output_svg: Path) -> None:
     qualified = lambda name: f"{{{namespace}}}{name}"
     element_tree.SubElement(root, qualified("rect"), {"width": "100%", "height": "100%", "fill": "white"})
 
-    orientation = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.3 0 0 1.3 -70 55)"})
+    orientation = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.697619 0 0 1.15 -212.5714 51)"})
     for element in children[2:14]:
-        orientation.append(copy.deepcopy(element))
+        copied = copy.deepcopy(element)
+        if copied.get("class") == "axis":
+            copied.set("vector-effect", "non-scaling-stroke")
+        if copied.tag.endswith("text") and copied.text == "orientation histogram":
+            copied.set("transform", "translate(390 0) scale(0.6775 1) translate(-390 0)")
+        orientation.append(copied)
 
     radial = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.15 0 0 1.15 -735 430)"})
     for element in children[14:18]:
-        radial.append(copy.deepcopy(element))
+        copied = copy.deepcopy(element)
+        if copied.get("class") == "axis":
+            copied.set("vector-effect", "non-scaling-stroke")
+        if copied.tag.endswith("text") and copied.text == "g(r)":
+            copied.set("x", "1030")
+        radial.append(copied)
 
-    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 330 735 L 405 785"})
-    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 570 735 L 495 785"})
+    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 330 755 L 405 785"})
+    element_tree.SubElement(root, qualified("path"), {"class": "arrow", "d": "M 570 755 L 495 785"})
 
     workflow = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.2 0 0 1.2 -498 360)"})
     for element in children[20:]:
         copied = copy.deepcopy(element)
+        if copied.tag.endswith("text") and copied.text in {"kNN graph", "(k = 32)"}:
+            copied.set("x", "530")
         if copied.tag.endswith("text") and copied.text in {"non-trivial", "spectral coordinates"}:
-            copied.set("x", "500")
+            copied.set("x", "790")
+            copied.set("text-anchor", "middle")
+            copied.set("y", "1017" if copied.text == "non-trivial" else "1054")
         workflow.append(copied)
     element_tree.ElementTree(root).write(output_svg, encoding="utf-8", xml_declaration=True)
 
