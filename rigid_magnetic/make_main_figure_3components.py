@@ -305,6 +305,10 @@ def build_figure(
         cax.set_position([color_box.x0, axis_box.y0, color_box.width, axis_box.height])
     state_colorbars = []
     displayed_limit = round(color_limit, 3)
+    if displayed_limit >= color_limit:
+        displayed_limit = float(np.floor(color_limit * 1000.0) / 1000.0)
+    if displayed_limit <= 0.0:
+        displayed_limit = color_limit
     ticks = [-displayed_limit, 0.0, displayed_limit]
     for coordinate, cax, axis in zip((1, 2, 3), map_caxes[:3], (axis_f, axis_g, axis_h)):
         map_box, color_box = axis.get_position(), cax.get_position()
@@ -314,6 +318,7 @@ def build_figure(
         colorbar.set_ticks(ticks)
         colorbar.formatter = scientific_formatter()
         colorbar.update_ticks()
+        colorbar.ax.set_ylim(*colorbar.mappable.get_clim())
         colorbar.ax.yaxis.set_ticks_position("left")
         colorbar.ax.yaxis.set_label_position("right")
         colorbar.ax.tick_params(labelsize=COLORBAR_TICK_FONT_SIZE, pad=1, width=reference.MATPLOTLIB_AXIS_LINEWIDTH)
@@ -405,7 +410,7 @@ def enlarged_panel_a_source(panel_svg: Path, output_svg: Path) -> None:
     workflow = element_tree.SubElement(root, qualified("g"), {"transform": "matrix(1.2 0 0 1.2 -498 360)"})
     for element in children[20:]:
         copied = copy.deepcopy(element)
-        if copied.tag.endswith("text") and copied.text in {"kNN graph", "(k = 32)"}:
+        if copied.tag.endswith("text") and copied.text in {"kNN graph", "(k = 50)"}:
             copied.set("x", "530")
         if copied.tag.endswith("text") and copied.text in {"non-trivial", "spectral coordinates"}:
             copied.set("x", "790")

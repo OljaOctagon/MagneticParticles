@@ -38,7 +38,7 @@ from topology_state_map import (
 )
 
 
-EXPECTED_K = 32
+EXPECTED_K = 50
 EXPECTED_SEED = 42
 FEATURE_SET = "reduced_no_global"
 DISPLAY_COORDINATES = (1, 2)

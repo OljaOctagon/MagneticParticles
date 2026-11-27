@@ -7,6 +7,7 @@ import argparse
 import json
 import logging
 import re
+from itertools import combinations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -23,8 +24,8 @@ from sklearn.preprocessing import StandardScaler
 
 from ML_diffusion_map_testing import (
     ABLATION_GROUPS,
-    META_COLUMNS,
     SEED,
+    ablation_feature_set_key,
     build_ablation_graph,
     feature_columns_for_groups,
     load_and_validate_data,
@@ -38,7 +39,7 @@ RIDGE_ALPHA = 1.0
 KNN_NEIGHBORS = 5
 RID_PATTERN = re.compile(r"_rid_(?P<rid>[^_]+)$")
 
-FEATURE_SETS = {
+CANDIDATE_FEATURE_SETS = {
     "gofr": ["gofr"],
     "orientation": ["orientation"],
     "Rg": ["Rg"],
@@ -47,6 +48,11 @@ FEATURE_SETS = {
     "Rg__gofr": ["Rg", "gofr"],
     "full_reference": list(ABLATION_GROUPS),
 }
+PAIR_CONTEXT_FEATURE_SETS = {
+    "gofr": ["gofr"],
+    "orientation": ["orientation"],
+    "Rg": ["Rg"],
+}
 PLOT_FEATURE_SETS = (
     "gofr",
     "orientation__gofr",
@@ -54,6 +60,41 @@ PLOT_FEATURE_SETS = (
     "Rg__gofr",
     "full_reference",
 )
+
+
+def pair_feature_sets() -> dict[str, list[str]]:
+    """Return all ten pair combinations with the candidate context sets."""
+    pairs = {
+        "__".join(pair): list(pair)
+        for pair in combinations(ABLATION_GROUPS, 2)
+    }
+    return {
+        **PAIR_CONTEXT_FEATURE_SETS,
+        **pairs,
+        "full_reference": list(ABLATION_GROUPS),
+    }
+
+
+def all_feature_sets() -> dict[str, list[str]]:
+    """Return all non-empty combinations, with the full set labelled as reference."""
+    feature_sets = {
+        "__".join(groups): list(groups)
+        for n_groups in range(1, len(ABLATION_GROUPS) + 1)
+        for groups in combinations(ABLATION_GROUPS, n_groups)
+    }
+    full_key = "__".join(ABLATION_GROUPS)
+    feature_sets["full_reference"] = feature_sets.pop(full_key)
+    return feature_sets
+
+
+def feature_sets_for_scope(scope: str) -> dict[str, list[str]]:
+    if scope == "candidates":
+        return dict(CANDIDATE_FEATURE_SETS)
+    if scope == "pairs":
+        return pair_feature_sets()
+    if scope == "all":
+        return all_feature_sets()
+    raise ValueError(f"Unsupported feature-set scope: {scope}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +120,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("results/MAG2P_order_parameters_per_cluster-2026-1-13-18:15:54.pickle"),
         help="Exact topology source used by state_diagram.ipynb.",
+    )
+    parser.add_argument(
+        "--output-name",
+        default="connectivity_recovery",
+        help="Output directory name below the ablation root.",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("candidates", "pairs", "all"),
+        default="candidates",
+        help="Feature-set scope: original candidates, all ten pairs, or all 31 combinations.",
     )
     return parser.parse_args()
 
@@ -446,13 +498,31 @@ def main() -> None:
     ablation_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if ablation_manifest.get("scope") != "full" or ablation_manifest.get("n_feature_combinations") != 31:
         raise ValueError("Connectivity recovery requires a completed full 31-combination ablation.")
-    output_root = ablation_root / "connectivity_recovery"
+    if Path(args.output_name).name != args.output_name:
+        raise ValueError("--output-name must be a single directory name.")
+    feature_sets = feature_sets_for_scope(args.scope)
+    output_root = ablation_root / args.output_name
     data_dir = output_root / "data"
     plots_dir = output_root / "plots"
     if output_root.exists():
         raise RuntimeError(f"Refusing to overwrite an existing connectivity study: {output_root}")
     data_dir.mkdir(parents=True)
     plots_dir.mkdir()
+
+    ablation_summary_path = ablation_root / "data" / "full_group_ablation_summary.csv"
+    if not ablation_summary_path.is_file():
+        raise FileNotFoundError(f"Completed ablation summary is missing: {ablation_summary_path}")
+    ablation_summary = pd.read_csv(ablation_summary_path).set_index("feature_set")
+    canonical_keys = {
+        feature_set: ablation_feature_set_key(groups)
+        for feature_set, groups in feature_sets.items()
+    }
+    missing_ablation_rows = sorted(set(canonical_keys.values()) - set(ablation_summary.index))
+    if missing_ablation_rows:
+        raise ValueError(
+            "Feature sets are missing from the ablation summary: "
+            f"{missing_ablation_rows}"
+        )
 
     descriptors, feature_groups, topology, alignment = load_and_align_sources(
         args.data_path, args.topology_path
@@ -476,8 +546,27 @@ def main() -> None:
     summary_rows = []
     category_rows = []
     prediction_frames = []
+    excluded_fragmented_sets: dict[str, dict[str, object]] = {}
     plot_predictions: dict[str, dict[str, tuple[pd.DataFrame, np.ndarray]]] = {}
-    for feature_set, groups in FEATURE_SETS.items():
+    for feature_set, groups in feature_sets.items():
+        ablation_row = ablation_summary.loc[canonical_keys[feature_set]]
+        if not bool(ablation_row["rank_valid"]):
+            excluded_fragmented_sets[feature_set] = {
+                "ablation_feature_set": canonical_keys[feature_set],
+                "n_components": int(ablation_row["n_components"]),
+                "fraction_in_largest": float(ablation_row["fraction_in_largest"]),
+                "reason": (
+                    "Graph is fragmented; its leading spectral coordinates are not a "
+                    "single coherent coordinate system."
+                ),
+            }
+            logging.warning(
+                "Skipping fragmented representation %s (%d components, %.3f in largest).",
+                feature_set,
+                int(ablation_row["n_components"]),
+                float(ablation_row["fraction_in_largest"]),
+            )
+            continue
         columns = feature_columns_for_groups(feature_groups, groups)
         matrix = StandardScaler().fit_transform(descriptors[columns].to_numpy(dtype=float))
         _, graph = build_ablation_graph(matrix, int(ablation_manifest["selected_k"]))
@@ -512,10 +601,32 @@ def main() -> None:
         logging.info("Connectivity recovery complete: %s", feature_set)
 
     summary = pd.DataFrame(summary_rows)
+    flag_rows = []
+    for feature_set in summary["feature_set"].unique():
+        ablation_row = ablation_summary.loc[canonical_keys[feature_set]]
+        flag_rows.append(
+            {
+                "feature_set": feature_set,
+                "contains_global": bool(ablation_row["includes_global"]),
+                "fragmented": not bool(ablation_row["rank_valid"]),
+                "rank_valid": bool(ablation_row["rank_valid"]),
+                "n_components": int(ablation_row["n_components"]),
+                "fraction_in_largest": float(ablation_row["fraction_in_largest"]),
+            }
+        )
+    summary = summary.merge(pd.DataFrame(flag_rows), on="feature_set", how="left")
     summary["composition_error_rank"] = summary.groupby("model")[
         "mean_composition_error"
     ].rank(method="min", ascending=True)
-    summary = summary.sort_values(["model", "composition_error_rank", "feature_set"])
+    summary["clean_composition_error_rank"] = np.nan
+    clean_mask = ~summary["contains_global"]
+    summary.loc[clean_mask, "clean_composition_error_rank"] = summary.loc[
+        clean_mask
+    ].groupby("model")["mean_composition_error"].rank(method="min", ascending=True)
+    summary = summary.sort_values(
+        ["model", "clean_composition_error_rank", "composition_error_rank", "feature_set"],
+        na_position="last",
+    )
     per_category = pd.DataFrame(category_rows).sort_values(["model", "feature_set", "category"])
     predictions = pd.concat(prediction_frames, ignore_index=True)
     summary.to_csv(data_dir / "connectivity_recovery_summary.csv", index=False)
@@ -528,7 +639,19 @@ def main() -> None:
     best_feature_sets = summary.loc[
         summary.groupby("model")["mean_composition_error"].idxmin(), "feature_set"
     ].tolist()
-    selected_for_plots = list(dict.fromkeys([*PLOT_FEATURE_SETS, *best_feature_sets]))
+    clean_summary = summary.loc[clean_mask]
+    best_clean_feature_sets = clean_summary.loc[
+        clean_summary.groupby("model")["mean_composition_error"].idxmin(), "feature_set"
+    ].tolist()
+    selected_for_plots = list(
+        dict.fromkeys(
+            [
+                *PLOT_FEATURE_SETS,
+                *best_clean_feature_sets,
+                *best_feature_sets,
+            ]
+        )
+    )
     for feature_set in selected_for_plots:
         for model, (state_table, predicted) in plot_predictions[feature_set].items():
             _, _, composition_error = prediction_metrics(
@@ -584,17 +707,46 @@ def main() -> None:
             "models": {"ridge_alpha": RIDGE_ALPHA, "knn_neighbors": KNN_NEIGHBORS},
             "predictions": "Raw out-of-fold predictions; no clipping or simplex normalization for primary metrics.",
         },
-        "feature_sets": FEATURE_SETS,
+        "scope": args.scope,
+        "feature_sets": feature_sets,
+        "excluded_fragmented_sets": excluded_fragmented_sets,
         "circularity": {
             "connectivity_target_circular": False,
             "definition": "No tested feature set contains topology category fractions or structure_type labels directly.",
             "provenance_overlap_sets": [
-                name for name, groups in FEATURE_SETS.items() if "Rg" in groups or "global" in groups
+                name
+                for name, groups in feature_sets.items()
+                if "Rg" in groups or "global" in groups
+            ],
+            "contains_global_sets": [
+                name for name, groups in feature_sets.items() if "global" in groups
+            ],
+            "clean_sets": [
+                name
+                for name in feature_sets
+                if name not in excluded_fragmented_sets
+                and "global" not in feature_sets[name]
             ],
         },
+        "ranking": {
+            "overall": "composition_error_rank",
+            "clean": "clean_composition_error_rank (excludes global-containing sets)",
+        },
         "best_feature_set_by_model": {
-            model: summary.loc[summary["model"] == model].iloc[0]["feature_set"]
+            model: summary.loc[
+                summary.loc[summary["model"] == model, "mean_composition_error"].idxmin(),
+                "feature_set",
+            ]
             for model in sorted(summary["model"].unique())
+        },
+        "best_clean_feature_set_by_model": {
+            model: clean_summary.loc[
+                clean_summary.loc[
+                    clean_summary["model"] == model, "mean_composition_error"
+                ].idxmin(),
+                "feature_set",
+            ]
+            for model in sorted(clean_summary["model"].unique())
         },
     }
     with (data_dir / "connectivity_recovery_manifest.json").open("w", encoding="utf-8") as handle:
